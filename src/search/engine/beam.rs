@@ -9,7 +9,7 @@ use super::super::{
     SearchPolicy, SearchState, score_partial, try_finalize,
 };
 use super::synth::{
-    SearchRuntime, cheap_normalize_ptm, ctx_fingerprint, greedy_local_repair, replace_hole, synth,
+    SearchRuntime, ctx_fingerprint, greedy_local_repair, replace_hole, synth,
 };
 
 fn select_goal_id(
@@ -154,9 +154,8 @@ fn state_fingerprint(state: &SearchState) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     let mut hole_map = HashMap::new();
     let mut next_id = 0u32;
-    let normalized_root = cheap_normalize_ptm(&state.root, 24);
     hash_ptm(
-        &normalized_root,
+        &state.root,
         state,
         &mut hole_map,
         &mut next_id,
