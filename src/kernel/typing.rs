@@ -2,6 +2,28 @@ use std::fmt;
 
 use super::{Ctx, Tm, Ty};
 
+/// 型の正規化
+///
+/// 命題論理の型には β-redex が存在しないため現在は恒等関数だが
+/// FOL 拡張で型中に項 (`Pred { args }`) が埋め込まれた場合にここで項引数を正規化する拡張点となる
+pub fn normalize_ty(ty: &Ty) -> Ty {
+    match ty {
+        Ty::Atom(i) => Ty::Atom(*i),
+        Ty::Bot => Ty::Bot,
+        Ty::Arr(a, b) => Ty::Arr(Box::new(normalize_ty(a)), Box::new(normalize_ty(b))),
+        Ty::Prod(a, b) => Ty::Prod(Box::new(normalize_ty(a)), Box::new(normalize_ty(b))),
+        Ty::Sum(a, b) => Ty::Sum(Box::new(normalize_ty(a)), Box::new(normalize_ty(b))),
+    }
+}
+
+/// 型の同値判定
+///
+/// 両辺を `normalize_ty` で正規化したうえで構造比較する
+/// 命題論理では `==` と等価だが、FOL 拡張時に型中の項が β 同値なケース (`P((\x.x) t)` vs `P(t)`) を吸収する
+pub fn ty_equiv(a: &Ty, b: &Ty) -> bool {
+    normalize_ty(a) == normalize_ty(b)
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum TypeError {
     UnboundVar { index: u32, ctx_len: usize },
@@ -73,7 +95,7 @@ pub fn infer(ctx: &Ctx, tm: &Tm) -> Result<Ty, TypeError> {
             let x_ty = infer(ctx, x)?;
             match f_ty {
                 Ty::Arr(arg, out) => {
-                    if *arg == x_ty {
+                    if ty_equiv(&arg, &x_ty) {
                         Ok(*out)
                     } else {
                         Err(TypeError::ArgTypeMismatch {
@@ -114,7 +136,7 @@ pub fn infer(ctx: &Ctx, tm: &Tm) -> Result<Ty, TypeError> {
                 let mut rctx = ctx.clone();
                 rctx.push((*b).clone());
                 let rty = infer(&rctx, right)?;
-                if lty == rty {
+                if ty_equiv(&lty, &rty) {
                     Ok(lty)
                 } else {
                     Err(TypeError::BranchTypeMismatch {
@@ -137,7 +159,7 @@ pub fn infer(ctx: &Ctx, tm: &Tm) -> Result<Ty, TypeError> {
 
 pub fn check(ctx: &Ctx, tm: &Tm, ty: &Ty) -> Result<(), TypeError> {
     let inferred = infer(ctx, tm)?;
-    if &inferred == ty {
+    if ty_equiv(&inferred, ty) {
         Ok(())
     } else {
         Err(TypeError::TypeMismatch {

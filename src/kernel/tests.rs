@@ -370,3 +370,202 @@ fn kripke_no_countermodel_for_theorem_small_search() {
     let cm = find_kripke_countermodel(&Vec::new(), &goal, 3);
     assert!(cm.is_none());
 }
+
+#[test]
+fn free_in_basic() {
+    // Var(0) が Var(0) に自由出現する
+    assert!(free_in(0, &Tm::Var(0)));
+    // Var(1) は Var(0) に自由出現しない
+    assert!(!free_in(1, &Tm::Var(0)));
+    // Var(0) は λ_.Var(0) 内で束縛される (探索する添字は 1 にシフトされる)
+    let lam = Tm::Lam {
+        arg_ty: atom(0),
+        body: Box::new(Tm::Var(0)),
+    };
+    assert!(!free_in(0, &lam));
+    // Var(0) は λ_.Var(1) 内で自由出現する
+    let lam2 = Tm::Lam {
+        arg_ty: atom(0),
+        body: Box::new(Tm::Var(1)),
+    };
+    assert!(free_in(0, &lam2));
+}
+
+#[test]
+fn eta_reduce_function() {
+    // λx:A. f x → f (where f = Var(1), x = Var(0))
+    let tm = Tm::Lam {
+        arg_ty: atom(0),
+        body: Box::new(Tm::App(
+            Box::new(Tm::Var(1)),
+            Box::new(Tm::Var(0)),
+        )),
+    };
+    // η 簡約後: Var(1) が 1 シフトされ Var(0) になる
+    assert_eq!(eta_reduce(&tm), Tm::Var(0));
+}
+
+#[test]
+fn eta_reduce_no_false_positive() {
+    // λx:A. x x は η 簡約されない (引数が単に Var(0) を f に適用した形ではない)
+    let tm = Tm::Lam {
+        arg_ty: atom(0),
+        body: Box::new(Tm::App(
+            Box::new(Tm::Var(0)),
+            Box::new(Tm::Var(0)),
+        )),
+    };
+    assert_eq!(eta_reduce(&tm), tm);
+}
+
+#[test]
+fn eta_reduce_product() {
+    // ⟨fst p, snd p⟩ →  p where p = Var(0)
+    let p = Tm::Var(0);
+    let tm = Tm::Pair(
+        Box::new(Tm::Fst(Box::new(p.clone()))),
+        Box::new(Tm::Snd(Box::new(p.clone()))),
+    );
+    assert_eq!(eta_reduce(&tm), p);
+}
+
+#[test]
+fn eta_reduce_nested() {
+    // λx:A. λy:A. Var(2) y
+    // 内側の η 簡約: λy. Var(2) y → Var(1) (shift(-1, 0, Var(2)) = Var(1))
+    // 外側の body は Var(1) になり f x の形ではないためそれ以上の η 簡約は適用しない
+    // 結果: λx:A. Var(1)
+    let inner = Tm::Lam {
+        arg_ty: atom(0),
+        body: Box::new(Tm::App(
+            Box::new(Tm::Var(2)),
+            Box::new(Tm::Var(0)),
+        )),
+    };
+    let outer = Tm::Lam {
+        arg_ty: atom(0),
+        body: Box::new(inner),
+    };
+    let reduced = eta_reduce(&outer);
+    let expected = Tm::Lam {
+        arg_ty: atom(0),
+        body: Box::new(Tm::Var(1)),
+    };
+    assert_eq!(reduced, expected);
+
+    // normalize_eta (β簡約、次にη簡約) によって完全な連鎖は次のように簡約される:
+    // λx:A. (λy:A. Var(2) y) x → β λx:A. Var(1) x → η Var(0)
+    let outer_applied = Tm::Lam {
+        arg_ty: atom(0),
+        body: Box::new(Tm::App(
+            Box::new(Tm::Lam {
+                arg_ty: atom(0),
+                body: Box::new(Tm::App(
+                    Box::new(Tm::Var(2)),
+                    Box::new(Tm::Var(0)),
+                )),
+            }),
+            Box::new(Tm::Var(0)),
+        )),
+    };
+    assert_eq!(normalize_eta(&outer_applied), Tm::Var(0));
+}
+
+#[test]
+fn tm_equiv_beta() {
+    let a = atom(0);
+    // (λx:A. x) y  ≡βη  y
+    let redex = Tm::App(
+        Box::new(Tm::Lam {
+            arg_ty: a.clone(),
+            body: Box::new(Tm::Var(0)),
+        }),
+        Box::new(Tm::Var(0)),
+    );
+    assert!(tm_equiv(&redex, &Tm::Var(0)));
+}
+
+#[test]
+fn tm_equiv_eta() {
+    let a = atom(0);
+    // λx:A. f x  ≡βη f (where f = Var(0))
+    let expanded = Tm::Lam {
+        arg_ty: a,
+        body: Box::new(Tm::App(
+            Box::new(Tm::Var(1)),
+            Box::new(Tm::Var(0)),
+        )),
+    };
+    assert!(tm_equiv(&expanded, &Tm::Var(0)));
+}
+
+#[test]
+fn tm_equiv_not_equal() {
+    assert!(!tm_equiv(&Tm::Var(0), &Tm::Var(1)));
+}
+
+#[test]
+fn ty_equiv_structural() {
+    let a = atom(0);
+    let b = atom(1);
+    assert!(ty_equiv(&a, &a));
+    assert!(!ty_equiv(&a, &b));
+    let arr1 = Ty::Arr(Box::new(a.clone()), Box::new(b.clone()));
+    let arr2 = Ty::Arr(Box::new(a), Box::new(b));
+    assert!(ty_equiv(&arr1, &arr2));
+}
+
+#[test]
+fn normalize_ty_identity() {
+    // 現在、命題論理において normalize_ty は恒等関数
+    let ty = Ty::Arr(
+        Box::new(Ty::Prod(Box::new(atom(0)), Box::new(atom(1)))),
+        Box::new(Ty::Sum(Box::new(atom(2)), Box::new(Ty::Bot))),
+    );
+    assert_eq!(normalize_ty(&ty), ty);
+}
+
+#[test]
+fn check_uses_ty_equiv() {
+    // `check` が ty_equiv を使用していることを確認 (normalize_ty を通じた構造的等価性)
+    // 現在、命題論理においてこれは == だが関数は呼び出される
+    let a = atom(0);
+    let id = Tm::Lam {
+        arg_ty: a.clone(),
+        body: Box::new(Tm::Var(0)),
+    };
+    let ty = Ty::Arr(Box::new(a.clone()), Box::new(a));
+    assert!(check(&Vec::new(), &id, &ty).is_ok());
+}
+
+#[test]
+fn check_mismatch_detected() {
+    let a = atom(0);
+    let b = atom(1);
+    let id = Tm::Lam {
+        arg_ty: a.clone(),
+        body: Box::new(Tm::Var(0)),
+    };
+    let wrong_ty = Ty::Arr(Box::new(a), Box::new(b));
+    assert!(check(&Vec::new(), &id, &wrong_ty).is_err());
+}
+
+#[test]
+fn subject_reduction_eta() {
+    // η-簡約された項は型を保持する
+    let a = atom(0);
+    // λx:A. (λy:B→A. y) x — これは直接 η 簡約できないが、簡単なケースをテストする:
+    // λx:A. Var(1) x は ctx [A→A] で型 A → ? を持つ; η-簡約すると Var(0) になる
+    let ctx = vec![Ty::Arr(Box::new(a.clone()), Box::new(a.clone()))];
+    let expanded = Tm::Lam {
+        arg_ty: a.clone(),
+        body: Box::new(Tm::App(
+            Box::new(Tm::Var(1)),
+            Box::new(Tm::Var(0)),
+        )),
+    };
+    let ty_before = infer(&ctx, &expanded).expect("should typecheck");
+    let reduced = eta_reduce(&expanded);
+    let ty_after = infer(&ctx, &reduced).expect("η-reduced should typecheck");
+    assert_eq!(ty_before, ty_after);
+}
