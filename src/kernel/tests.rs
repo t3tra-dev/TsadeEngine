@@ -396,10 +396,7 @@ fn eta_reduce_function() {
     // λx:A. f x → f (where f = Var(1), x = Var(0))
     let tm = Tm::Lam {
         arg_ty: atom(0),
-        body: Box::new(Tm::App(
-            Box::new(Tm::Var(1)),
-            Box::new(Tm::Var(0)),
-        )),
+        body: Box::new(Tm::App(Box::new(Tm::Var(1)), Box::new(Tm::Var(0)))),
     };
     // η 変換後: Var(1) が 1 シフトされ Var(0) になる
     assert_eq!(eta_reduce(&tm), Tm::Var(0));
@@ -410,10 +407,7 @@ fn eta_reduce_no_false_positive() {
     // λx:A. x x は η 変換されない (引数が単に Var(0) を f に適用した形ではない)
     let tm = Tm::Lam {
         arg_ty: atom(0),
-        body: Box::new(Tm::App(
-            Box::new(Tm::Var(0)),
-            Box::new(Tm::Var(0)),
-        )),
+        body: Box::new(Tm::App(Box::new(Tm::Var(0)), Box::new(Tm::Var(0)))),
     };
     assert_eq!(eta_reduce(&tm), tm);
 }
@@ -437,10 +431,7 @@ fn eta_reduce_nested() {
     // 結果: λx:A. Var(1)
     let inner = Tm::Lam {
         arg_ty: atom(0),
-        body: Box::new(Tm::App(
-            Box::new(Tm::Var(2)),
-            Box::new(Tm::Var(0)),
-        )),
+        body: Box::new(Tm::App(Box::new(Tm::Var(2)), Box::new(Tm::Var(0)))),
     };
     let outer = Tm::Lam {
         arg_ty: atom(0),
@@ -460,10 +451,7 @@ fn eta_reduce_nested() {
         body: Box::new(Tm::App(
             Box::new(Tm::Lam {
                 arg_ty: atom(0),
-                body: Box::new(Tm::App(
-                    Box::new(Tm::Var(2)),
-                    Box::new(Tm::Var(0)),
-                )),
+                body: Box::new(Tm::App(Box::new(Tm::Var(2)), Box::new(Tm::Var(0)))),
             }),
             Box::new(Tm::Var(0)),
         )),
@@ -491,10 +479,7 @@ fn tm_equiv_eta() {
     // λx:A. f x  ≡βη f (where f = Var(0))
     let expanded = Tm::Lam {
         arg_ty: a,
-        body: Box::new(Tm::App(
-            Box::new(Tm::Var(1)),
-            Box::new(Tm::Var(0)),
-        )),
+        body: Box::new(Tm::App(Box::new(Tm::Var(1)), Box::new(Tm::Var(0)))),
     };
     assert!(tm_equiv(&expanded, &Tm::Var(0)));
 }
@@ -559,10 +544,7 @@ fn subject_reduction_eta() {
     let ctx = vec![Ty::Arr(Box::new(a.clone()), Box::new(a.clone()))];
     let expanded = Tm::Lam {
         arg_ty: a.clone(),
-        body: Box::new(Tm::App(
-            Box::new(Tm::Var(1)),
-            Box::new(Tm::Var(0)),
-        )),
+        body: Box::new(Tm::App(Box::new(Tm::Var(1)), Box::new(Tm::Var(0)))),
     };
     let ty_before = infer(&ctx, &expanded).expect("should typecheck");
     let reduced = eta_reduce(&expanded);

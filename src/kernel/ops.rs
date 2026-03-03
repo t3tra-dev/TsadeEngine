@@ -218,10 +218,11 @@ pub fn eta_reduce(tm: &Tm) -> Tm {
         Tm::Lam { arg_ty, body } => {
             let body_r = eta_reduce(body);
             // 関数 η: λx:A. f x → f when Var(0) ∉ FV(f)
-            if let Tm::App(f, x) = &body_r {
-                if **x == Tm::Var(0) && !free_in(0, f) {
-                    return shift(-1, 0, f);
-                }
+            if let Tm::App(f, x) = &body_r
+                && **x == Tm::Var(0)
+                && !free_in(0, f)
+            {
+                return shift(-1, 0, f);
             }
             Tm::Lam {
                 arg_ty: arg_ty.clone(),
@@ -235,10 +236,10 @@ pub fn eta_reduce(tm: &Tm) -> Tm {
             let a_r = eta_reduce(a);
             let b_r = eta_reduce(b);
             // 直積 η: ⟨fst p, snd p⟩ → p
-            if let (Tm::Fst(pa), Tm::Snd(pb)) = (&a_r, &b_r) {
-                if **pa == **pb {
-                    return (**pa).clone();
-                }
+            if let (Tm::Fst(pa), Tm::Snd(pb)) = (&a_r, &b_r)
+                && **pa == **pb
+            {
+                return (**pa).clone();
             }
             Tm::Pair(Box::new(a_r), Box::new(b_r))
         }

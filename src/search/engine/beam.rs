@@ -8,9 +8,7 @@ use super::super::{
     ChoiceStream, Goal, GoalStrategy, PTm, SearchConfig, SearchMetrics, SearchOutcome,
     SearchPolicy, SearchState, score_partial, try_finalize,
 };
-use super::synth::{
-    SearchRuntime, ctx_fingerprint, greedy_local_repair, replace_hole, synth,
-};
+use super::synth::{SearchRuntime, ctx_fingerprint, greedy_local_repair, replace_hole, synth};
 
 fn select_goal_id(
     state: &SearchState,
@@ -154,13 +152,7 @@ fn state_fingerprint(state: &SearchState) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     let mut hole_map = HashMap::new();
     let mut next_id = 0u32;
-    hash_ptm(
-        &state.root,
-        state,
-        &mut hole_map,
-        &mut next_id,
-        &mut hasher,
-    );
+    hash_ptm(&state.root, state, &mut hole_map, &mut next_id, &mut hasher);
 
     // root に現れない余剰 goal も fingerprint に反映して整合性バグを炙る
     let mut leftovers: Vec<(u32, Ty, bool)> = state
