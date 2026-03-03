@@ -207,7 +207,7 @@ pub fn free_in(var: u32, tm: &Tm) -> bool {
     }
 }
 
-/// ボトムアップη簡約
+/// ボトムアップ η 変換
 ///
 /// - 関数 η: `λx:A. f x` → `f` (x ∉ FV(f))
 /// - 直積 η: `⟨fst p, snd p⟩` → `p`
@@ -268,7 +268,7 @@ pub fn eta_reduce(tm: &Tm) -> Tm {
     }
 }
 
-/// β 正規化の後 η 簡約を適用して βη 正規形を得る
+/// β 正規化の後 η 変換を適用して βη 正規形を得る
 pub fn normalize_eta(tm: &Tm) -> Tm {
     eta_reduce(&normalize(tm))
 }

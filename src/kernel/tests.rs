@@ -401,13 +401,13 @@ fn eta_reduce_function() {
             Box::new(Tm::Var(0)),
         )),
     };
-    // η 簡約後: Var(1) が 1 シフトされ Var(0) になる
+    // η 変換後: Var(1) が 1 シフトされ Var(0) になる
     assert_eq!(eta_reduce(&tm), Tm::Var(0));
 }
 
 #[test]
 fn eta_reduce_no_false_positive() {
-    // λx:A. x x は η 簡約されない (引数が単に Var(0) を f に適用した形ではない)
+    // λx:A. x x は η 変換されない (引数が単に Var(0) を f に適用した形ではない)
     let tm = Tm::Lam {
         arg_ty: atom(0),
         body: Box::new(Tm::App(
@@ -432,8 +432,8 @@ fn eta_reduce_product() {
 #[test]
 fn eta_reduce_nested() {
     // λx:A. λy:A. Var(2) y
-    // 内側の η 簡約: λy. Var(2) y → Var(1) (shift(-1, 0, Var(2)) = Var(1))
-    // 外側の body は Var(1) になり f x の形ではないためそれ以上の η 簡約は適用しない
+    // 内側の η 変換: λy. Var(2) y → Var(1) (shift(-1, 0, Var(2)) = Var(1))
+    // 外側の body は Var(1) になり f x の形ではないためそれ以上の η 変換は適用しない
     // 結果: λx:A. Var(1)
     let inner = Tm::Lam {
         arg_ty: atom(0),
@@ -453,7 +453,7 @@ fn eta_reduce_nested() {
     };
     assert_eq!(reduced, expected);
 
-    // normalize_eta (β簡約、次にη簡約) によって完全な連鎖は次のように簡約される:
+    // normalize_eta (β 簡約、次に η 変換) によって完全な連鎖は次のように正規化される:
     // λx:A. (λy:A. Var(2) y) x → β λx:A. Var(1) x → η Var(0)
     let outer_applied = Tm::Lam {
         arg_ty: atom(0),
@@ -552,10 +552,10 @@ fn check_mismatch_detected() {
 
 #[test]
 fn subject_reduction_eta() {
-    // η-簡約された項は型を保持する
+    // η 変換された項は型を保持する
     let a = atom(0);
-    // λx:A. (λy:B→A. y) x — これは直接 η 簡約できないが、簡単なケースをテストする:
-    // λx:A. Var(1) x は ctx [A→A] で型 A → ? を持つ; η-簡約すると Var(0) になる
+    // λx:A. (λy:B→A. y) x — これは直接 η 変換できないが、簡単なケースをテストする:
+    // λx:A. Var(1) x は ctx [A→A] で型 A → ? を持つ; η 変換すると Var(0) になる
     let ctx = vec![Ty::Arr(Box::new(a.clone()), Box::new(a.clone()))];
     let expanded = Tm::Lam {
         arg_ty: a.clone(),
