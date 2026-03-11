@@ -93,6 +93,12 @@ fn ptm_node_count(tm: &PTm) -> usize {
             1 + ptm_node_count(scrut) + ptm_node_count(left) + ptm_node_count(right)
         }
         PTm::Absurd { bot_term, .. } => 1 + ptm_node_count(bot_term),
+        PTm::TLam { body } => 1 + ptm_node_count(body),
+        PTm::TApp { term, .. } => 1 + ptm_node_count(term),
+        PTm::Pack { body, .. } => 1 + ptm_node_count(body),
+        PTm::Unpack { scrut, body } => 1 + ptm_node_count(scrut) + ptm_node_count(body),
+        PTm::Refl { .. } => 1,
+        PTm::Subst { eq_proof, body, .. } => 1 + ptm_node_count(eq_proof) + ptm_node_count(body),
     }
 }
 

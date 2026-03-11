@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
-use crate::kernel::{Ctx, Tm, Ty};
+use crate::kernel::{Ctx, FOTerm, Tm, Ty};
 
 pub trait ChoiceStream {
     fn next_u32(&mut self) -> u32;
@@ -38,6 +38,30 @@ pub enum PTm {
     Absurd {
         bot_term: Box<PTm>,
         target_ty: Ty,
+    },
+    TLam {
+        body: Box<PTm>,
+    },
+    TApp {
+        term: Box<PTm>,
+        witness: FOTerm,
+    },
+    Pack {
+        witness: FOTerm,
+        body: Box<PTm>,
+        exists_ty: Ty,
+    },
+    Unpack {
+        scrut: Box<PTm>,
+        body: Box<PTm>,
+    },
+    Refl {
+        term: FOTerm,
+    },
+    Subst {
+        eq_proof: Box<PTm>,
+        body: Box<PTm>,
+        motive: Ty,
     },
 }
 
@@ -240,4 +264,14 @@ pub struct PartialFeatures {
     pub pair_nodes: usize,
     pub sum_intro_nodes: usize,
     pub proj_nodes: usize,
+    /// TLam (∀-intro) ノード数 — FOL証明の前進を報酬に使う
+    pub tlam_nodes: usize,
+    /// Pack (∃-intro) ノード数 — 同上
+    pub pack_nodes: usize,
+    /// Pack/TApp の witness FOTerm サイズ合計 — 大きな witness にペナルティ
+    pub fo_witness_cost: usize,
+    /// tractability == 0 のゴール数 — 明らかに詰まっているホール
+    pub stuck_goals: usize,
+    /// 全ゴールの tractability 合計 — 残りゴールが解きやすいほど高い
+    pub total_tractability: usize,
 }

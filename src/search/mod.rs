@@ -12,7 +12,8 @@ pub use features::{
 };
 pub use finalize::try_finalize;
 pub use pretty::{
-    pretty_ptm, pretty_ptm_unicode, pretty_tm, pretty_tm_unicode, pretty_ty, pretty_ty_unicode,
+    pretty_fo_term, pretty_ptm, pretty_ptm_unicode, pretty_tm, pretty_tm_unicode, pretty_ty,
+    pretty_ty_unicode,
 };
 pub use types::{
     ChoiceStream, Goal, GoalStrategy, PTm, PartialFeatures, SearchConfig, SearchMetrics,

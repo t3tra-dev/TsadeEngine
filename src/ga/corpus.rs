@@ -1,5 +1,5 @@
 use crate::ga::{GAConfig, evolve_theorem};
-use crate::kernel::{Ctx, Ty, tm_case_nodes, tm_repeat_case_nodes};
+use crate::kernel::{Ctx, FOTerm, Ty, tm_case_nodes, tm_repeat_case_nodes};
 #[cfg(test)]
 use crate::kernel::{find_kripke_countermodel, is_intuitionistic_theorem};
 
@@ -9,6 +9,12 @@ pub struct TheoremCase {
     pub ctx: Ctx,
     pub target: Ty,
     pub expected_provable: bool,
+}
+
+#[derive(Clone, Debug)]
+pub struct TheoremCaseCategory {
+    pub name: &'static str,
+    pub cases: Vec<TheoremCase>,
 }
 
 #[derive(Clone, Debug)]
@@ -66,6 +72,633 @@ impl CorpusReport {
     }
 }
 
+fn theorem_case_with_ctx(
+    name: &'static str,
+    ctx: Vec<Ty>,
+    target: Ty,
+    expected_provable: bool,
+) -> TheoremCase {
+    TheoremCase {
+        name: name.to_string(),
+        ctx,
+        target,
+        expected_provable,
+    }
+}
+
+fn prop_case(name: &'static str, target: Ty) -> TheoremCase {
+    theorem_case_with_ctx(name, vec![], target, true)
+}
+
+fn prop_unprovable_case(name: &'static str, target: Ty) -> TheoremCase {
+    theorem_case_with_ctx(name, vec![], target, false)
+}
+
+fn flatten_case_categories(categories: &[TheoremCaseCategory]) -> Vec<TheoremCase> {
+    categories
+        .iter()
+        .flat_map(|category| category.cases.iter().cloned())
+        .collect()
+}
+
+pub fn prop_implicational_corpus() -> Vec<TheoremCase> {
+    let a = Ty::Atom(0);
+    let b = Ty::Atom(1);
+    let c = Ty::Atom(2);
+
+    vec![
+        prop_case("I_identity", arr(a.clone(), a.clone())),
+        prop_case("K_const", chain(vec![a.clone(), b.clone(), a.clone()])),
+        prop_case(
+            "S_apply",
+            chain(vec![
+                arr(a.clone(), arr(b.clone(), c.clone())),
+                arr(a.clone(), b.clone()),
+                a.clone(),
+                c.clone(),
+            ]),
+        ),
+        prop_case(
+            "App",
+            chain(vec![arr(a.clone(), b.clone()), a.clone(), b.clone()]),
+        ),
+        prop_case(
+            "Comp",
+            chain(vec![
+                arr(b.clone(), c.clone()),
+                arr(a.clone(), b.clone()),
+                a.clone(),
+                c.clone(),
+            ]),
+        ),
+        prop_case(
+            "Flip",
+            chain(vec![
+                arr(a.clone(), arr(b.clone(), c.clone())),
+                b.clone(),
+                a.clone(),
+                c.clone(),
+            ]),
+        ),
+        prop_case(
+            "W_diag",
+            chain(vec![
+                arr(a.clone(), arr(a.clone(), b.clone())),
+                a.clone(),
+                b.clone(),
+            ]),
+        ),
+        prop_case(
+            "B_comp",
+            chain(vec![
+                arr(b.clone(), c.clone()),
+                arr(a.clone(), b.clone()),
+                arr(a.clone(), c.clone()),
+            ]),
+        ),
+        prop_case(
+            "Syllogism",
+            chain(vec![
+                arr(a.clone(), b.clone()),
+                arr(b.clone(), c.clone()),
+                arr(a.clone(), c.clone()),
+            ]),
+        ),
+    ]
+}
+
+pub fn prop_currying_corpus() -> Vec<TheoremCase> {
+    let a = Ty::Atom(0);
+    let b = Ty::Atom(1);
+    let c = Ty::Atom(2);
+
+    vec![
+        prop_case(
+            "Curry",
+            chain(vec![
+                arr(
+                    Ty::Prod(Box::new(a.clone()), Box::new(b.clone())),
+                    c.clone(),
+                ),
+                a.clone(),
+                b.clone(),
+                c.clone(),
+            ]),
+        ),
+        prop_case(
+            "Uncurry",
+            chain(vec![
+                arr(a.clone(), arr(b.clone(), c.clone())),
+                Ty::Prod(Box::new(a.clone()), Box::new(b.clone())),
+                c.clone(),
+            ]),
+        ),
+    ]
+}
+
+pub fn prop_product_corpus() -> Vec<TheoremCase> {
+    let a = Ty::Atom(0);
+    let b = Ty::Atom(1);
+    let c = Ty::Atom(2);
+    let d = Ty::Atom(3);
+
+    vec![
+        prop_case(
+            "Pair_intro",
+            chain(vec![
+                a.clone(),
+                b.clone(),
+                Ty::Prod(Box::new(a.clone()), Box::new(b.clone())),
+            ]),
+        ),
+        prop_case(
+            "Fst",
+            arr(
+                Ty::Prod(Box::new(a.clone()), Box::new(b.clone())),
+                a.clone(),
+            ),
+        ),
+        prop_case(
+            "Snd",
+            arr(
+                Ty::Prod(Box::new(a.clone()), Box::new(b.clone())),
+                b.clone(),
+            ),
+        ),
+        prop_case(
+            "Pair_comm",
+            arr(
+                Ty::Prod(Box::new(a.clone()), Box::new(b.clone())),
+                Ty::Prod(Box::new(b.clone()), Box::new(a.clone())),
+            ),
+        ),
+        prop_case(
+            "Pair_assoc",
+            arr(
+                Ty::Prod(
+                    Box::new(a.clone()),
+                    Box::new(Ty::Prod(Box::new(b.clone()), Box::new(c.clone()))),
+                ),
+                Ty::Prod(
+                    Box::new(Ty::Prod(Box::new(a.clone()), Box::new(b.clone()))),
+                    Box::new(c.clone()),
+                ),
+            ),
+        ),
+        prop_case(
+            "Pair_dup",
+            arr(
+                a.clone(),
+                Ty::Prod(Box::new(a.clone()), Box::new(a.clone())),
+            ),
+        ),
+        prop_case(
+            "Pair_map",
+            chain(vec![
+                Ty::Prod(
+                    Box::new(arr(a.clone(), b.clone())),
+                    Box::new(arr(a.clone(), c.clone())),
+                ),
+                a.clone(),
+                Ty::Prod(Box::new(b.clone()), Box::new(c.clone())),
+            ]),
+        ),
+        prop_case(
+            "Pair_unit_left",
+            arr(
+                Ty::Prod(Box::new(Ty::Atom(99)), Box::new(a.clone())),
+                a.clone(),
+            ),
+        ),
+        prop_case(
+            "DeepProdNest",
+            arr(
+                Ty::Prod(
+                    Box::new(Ty::Prod(Box::new(a.clone()), Box::new(b.clone()))),
+                    Box::new(Ty::Prod(Box::new(c.clone()), Box::new(d.clone()))),
+                ),
+                Ty::Prod(
+                    Box::new(Ty::Prod(Box::new(a.clone()), Box::new(c.clone()))),
+                    Box::new(Ty::Prod(Box::new(b.clone()), Box::new(d.clone()))),
+                ),
+            ),
+        ),
+    ]
+}
+
+pub fn prop_sum_basic_corpus() -> Vec<TheoremCase> {
+    let a = Ty::Atom(0);
+    let b = Ty::Atom(1);
+    let c = Ty::Atom(2);
+
+    vec![
+        prop_case(
+            "Sum_inl",
+            arr(a.clone(), Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
+        ),
+        prop_case(
+            "Sum_inr",
+            arr(b.clone(), Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
+        ),
+        prop_case(
+            "Sum_elim",
+            chain(vec![
+                arr(a.clone(), c.clone()),
+                arr(b.clone(), c.clone()),
+                Ty::Sum(Box::new(a.clone()), Box::new(b.clone())),
+                c.clone(),
+            ]),
+        ),
+        prop_case(
+            "Sum_comm",
+            arr(
+                Ty::Sum(Box::new(a.clone()), Box::new(b.clone())),
+                Ty::Sum(Box::new(b.clone()), Box::new(a.clone())),
+            ),
+        ),
+        prop_case(
+            "Sum_assoc",
+            arr(
+                Ty::Sum(
+                    Box::new(a.clone()),
+                    Box::new(Ty::Sum(Box::new(b.clone()), Box::new(c.clone()))),
+                ),
+                Ty::Sum(
+                    Box::new(Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
+                    Box::new(c.clone()),
+                ),
+            ),
+        ),
+        prop_case(
+            "TripleNestedSum",
+            arr(
+                Ty::Sum(
+                    Box::new(a.clone()),
+                    Box::new(Ty::Sum(Box::new(b.clone()), Box::new(c.clone()))),
+                ),
+                Ty::Sum(
+                    Box::new(Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
+                    Box::new(c.clone()),
+                ),
+            ),
+        ),
+        prop_case(
+            "SumSymmVariant",
+            arr(
+                Ty::Sum(
+                    Box::new(Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
+                    Box::new(c.clone()),
+                ),
+                Ty::Sum(
+                    Box::new(Ty::Sum(Box::new(b.clone()), Box::new(a.clone()))),
+                    Box::new(c.clone()),
+                ),
+            ),
+        ),
+        prop_case(
+            "Sum_bot_left",
+            arr(Ty::Sum(Box::new(Ty::Bot), Box::new(a.clone())), a.clone()),
+        ),
+        prop_case(
+            "Sum_bot_right",
+            arr(Ty::Sum(Box::new(a.clone()), Box::new(Ty::Bot)), a.clone()),
+        ),
+    ]
+}
+
+pub fn prop_sum_distrib_corpus() -> Vec<TheoremCase> {
+    let a = Ty::Atom(0);
+    let b = Ty::Atom(1);
+    let c = Ty::Atom(2);
+    let d = Ty::Atom(3);
+
+    vec![
+        prop_case(
+            "Sum_map",
+            chain(vec![
+                arr(a.clone(), c.clone()),
+                arr(b.clone(), d.clone()),
+                Ty::Sum(Box::new(a.clone()), Box::new(b.clone())),
+                Ty::Sum(Box::new(c.clone()), Box::new(d.clone())),
+            ]),
+        ),
+        prop_case(
+            "SumMap2",
+            chain(vec![
+                arr(a.clone(), c.clone()),
+                arr(b.clone(), d.clone()),
+                Ty::Sum(Box::new(a.clone()), Box::new(b.clone())),
+                Ty::Sum(Box::new(c.clone()), Box::new(d.clone())),
+            ]),
+        ),
+        prop_case(
+            "Sum_prod_distrib_left",
+            arr(
+                Ty::Prod(
+                    Box::new(Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
+                    Box::new(c.clone()),
+                ),
+                Ty::Sum(
+                    Box::new(Ty::Prod(Box::new(a.clone()), Box::new(c.clone()))),
+                    Box::new(Ty::Prod(Box::new(b.clone()), Box::new(c.clone()))),
+                ),
+            ),
+        ),
+        prop_case(
+            "Sum_prod_distrib_right",
+            arr(
+                Ty::Prod(
+                    Box::new(a.clone()),
+                    Box::new(Ty::Sum(Box::new(b.clone()), Box::new(c.clone()))),
+                ),
+                Ty::Sum(
+                    Box::new(Ty::Prod(Box::new(a.clone()), Box::new(b.clone()))),
+                    Box::new(Ty::Prod(Box::new(a.clone()), Box::new(c.clone()))),
+                ),
+            ),
+        ),
+    ]
+}
+
+pub fn prop_negation_core_corpus() -> Vec<TheoremCase> {
+    let a = Ty::Atom(0);
+    let b = Ty::Atom(1);
+    let c = Ty::Atom(2);
+    let d = Ty::Atom(3);
+
+    vec![
+        prop_case("ExFalso", arr(Ty::Bot, a.clone())),
+        prop_case(
+            "Contradiction",
+            arr(
+                Ty::Prod(Box::new(a.clone()), Box::new(neg(a.clone()))),
+                Ty::Bot,
+            ),
+        ),
+        prop_case(
+            "Explosion",
+            arr(
+                Ty::Prod(Box::new(a.clone()), Box::new(neg(a.clone()))),
+                b.clone(),
+            ),
+        ),
+        prop_case("DoubleNeg_intro", arr(a.clone(), neg(neg(a.clone())))),
+        prop_case(
+            "Contrapositive",
+            chain(vec![
+                arr(a.clone(), b.clone()),
+                arr(neg(b.clone()), neg(a.clone())),
+            ]),
+        ),
+        prop_case("TripleNeg", arr(neg(neg(neg(a.clone()))), neg(a.clone()))),
+        prop_case(
+            "NegationChain",
+            chain(vec![
+                arr(a.clone(), b.clone()),
+                arr(b.clone(), c.clone()),
+                arr(c.clone(), d.clone()),
+                arr(neg(d.clone()), neg(a.clone())),
+            ]),
+        ),
+    ]
+}
+
+pub fn prop_negation_demorgan_corpus() -> Vec<TheoremCase> {
+    let a = Ty::Atom(0);
+    let b = Ty::Atom(1);
+
+    vec![
+        prop_case(
+            "DeMorgan_and_to_or",
+            arr(
+                Ty::Prod(Box::new(neg(a.clone())), Box::new(neg(b.clone()))),
+                neg(Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
+            ),
+        ),
+        prop_case(
+            "DeMorgan_or_to_and",
+            arr(
+                neg(Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
+                Ty::Prod(Box::new(neg(a.clone())), Box::new(neg(b.clone()))),
+            ),
+        ),
+        prop_case(
+            "OrNeg_to_NegAnd",
+            arr(
+                Ty::Sum(Box::new(neg(a.clone())), Box::new(neg(b.clone()))),
+                neg(Ty::Prod(Box::new(a.clone()), Box::new(b.clone()))),
+            ),
+        ),
+        prop_case(
+            "WeakLEM",
+            neg(neg(Ty::Sum(Box::new(a.clone()), Box::new(neg(a.clone()))))),
+        ),
+    ]
+}
+
+pub fn prop_unprovable_basic_corpus() -> Vec<TheoremCase> {
+    let a = Ty::Atom(0);
+    let b = Ty::Atom(1);
+
+    vec![
+        prop_unprovable_case("UNPROV_atom", a.clone()),
+        prop_unprovable_case("UNPROV_impl", arr(a.clone(), b.clone())),
+        prop_unprovable_case("UNPROV_bot", Ty::Bot),
+    ]
+}
+
+pub fn prop_unprovable_classical_corpus() -> Vec<TheoremCase> {
+    let a = Ty::Atom(0);
+    let b = Ty::Atom(1);
+
+    vec![
+        prop_unprovable_case(
+            "UNPROV_Peirce",
+            arr(arr(arr(a.clone(), b.clone()), a.clone()), a.clone()),
+        ),
+        prop_unprovable_case("UNPROV_DNE", arr(neg(neg(a.clone())), a.clone())),
+        prop_unprovable_case(
+            "UNPROV_LEM",
+            Ty::Sum(Box::new(a.clone()), Box::new(neg(a.clone()))),
+        ),
+        prop_unprovable_case(
+            "UNPROV_NegAndToOr",
+            arr(
+                neg(Ty::Prod(Box::new(a.clone()), Box::new(b.clone()))),
+                Ty::Sum(Box::new(neg(a.clone())), Box::new(neg(b.clone()))),
+            ),
+        ),
+        prop_unprovable_case(
+            "UNPROV_Dummett",
+            Ty::Sum(
+                Box::new(arr(a.clone(), b.clone())),
+                Box::new(arr(b.clone(), a.clone())),
+            ),
+        ),
+        prop_unprovable_case(
+            "UNPROV_DeMorganReverse",
+            arr(
+                neg(Ty::Prod(Box::new(a.clone()), Box::new(b.clone()))),
+                Ty::Sum(Box::new(neg(a.clone())), Box::new(neg(b.clone()))),
+            ),
+        ),
+        prop_unprovable_case(
+            "UNPROV_ContraReverse",
+            chain(vec![
+                arr(neg(a.clone()), neg(b.clone())),
+                arr(b.clone(), a.clone()),
+            ]),
+        ),
+    ]
+}
+
+pub fn prop_advanced_implicational_corpus() -> Vec<TheoremCase> {
+    let a = Ty::Atom(0);
+    let b = Ty::Atom(1);
+    let c = Ty::Atom(2);
+    let d = Ty::Atom(3);
+    let e = Ty::Atom(4);
+    let f = Ty::Atom(5);
+
+    vec![
+        prop_case(
+            "HARD_LongChain",
+            chain(vec![
+                arr(d.clone(), e.clone()),
+                arr(c.clone(), d.clone()),
+                arr(b.clone(), c.clone()),
+                arr(a.clone(), b.clone()),
+                a.clone(),
+                e.clone(),
+            ]),
+        ),
+        prop_case(
+            "LongChain6",
+            chain(vec![
+                arr(e.clone(), f.clone()),
+                arr(d.clone(), e.clone()),
+                arr(c.clone(), d.clone()),
+                arr(b.clone(), c.clone()),
+                arr(a.clone(), b.clone()),
+                a.clone(),
+                f.clone(),
+            ]),
+        ),
+    ]
+}
+
+pub fn prop_advanced_mixed_corpus() -> Vec<TheoremCase> {
+    let a = Ty::Atom(0);
+    let b = Ty::Atom(1);
+    let c = Ty::Atom(2);
+    let d = Ty::Atom(3);
+
+    vec![
+        prop_case(
+            "HARD_NestedSum",
+            arr(
+                Ty::Sum(
+                    Box::new(Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
+                    Box::new(Ty::Sum(Box::new(c.clone()), Box::new(d.clone()))),
+                ),
+                Ty::Sum(
+                    Box::new(Ty::Sum(Box::new(a.clone()), Box::new(c.clone()))),
+                    Box::new(Ty::Sum(Box::new(b.clone()), Box::new(d.clone()))),
+                ),
+            ),
+        ),
+        prop_case(
+            "HARD_ContraProd",
+            chain(vec![
+                arr(
+                    a.clone(),
+                    Ty::Prod(Box::new(b.clone()), Box::new(c.clone())),
+                ),
+                arr(
+                    Ty::Sum(Box::new(neg(b.clone())), Box::new(neg(c.clone()))),
+                    neg(a.clone()),
+                ),
+            ]),
+        ),
+        prop_case(
+            "HARD_MixedDistrib",
+            arr(
+                Ty::Sum(
+                    Box::new(Ty::Prod(Box::new(a.clone()), Box::new(b.clone()))),
+                    Box::new(Ty::Prod(Box::new(c.clone()), Box::new(d.clone()))),
+                ),
+                Ty::Prod(
+                    Box::new(Ty::Sum(Box::new(a.clone()), Box::new(c.clone()))),
+                    Box::new(Ty::Sum(Box::new(b.clone()), Box::new(d.clone()))),
+                ),
+            ),
+        ),
+        prop_case(
+            "ComplexExplosion",
+            arr(
+                Ty::Prod(
+                    Box::new(Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
+                    Box::new(Ty::Prod(Box::new(neg(a.clone())), Box::new(neg(b.clone())))),
+                ),
+                c.clone(),
+            ),
+        ),
+    ]
+}
+
+pub fn propositional_case_categories() -> Vec<TheoremCaseCategory> {
+    vec![
+        TheoremCaseCategory {
+            name: "prop-implicational",
+            cases: prop_implicational_corpus(),
+        },
+        TheoremCaseCategory {
+            name: "prop-currying",
+            cases: prop_currying_corpus(),
+        },
+        TheoremCaseCategory {
+            name: "prop-product",
+            cases: prop_product_corpus(),
+        },
+        TheoremCaseCategory {
+            name: "prop-sum-basic",
+            cases: prop_sum_basic_corpus(),
+        },
+        TheoremCaseCategory {
+            name: "prop-sum-distrib",
+            cases: prop_sum_distrib_corpus(),
+        },
+        TheoremCaseCategory {
+            name: "prop-negation-core",
+            cases: prop_negation_core_corpus(),
+        },
+        TheoremCaseCategory {
+            name: "prop-negation-demorgan",
+            cases: prop_negation_demorgan_corpus(),
+        },
+        TheoremCaseCategory {
+            name: "prop-unprovable-basic",
+            cases: prop_unprovable_basic_corpus(),
+        },
+        TheoremCaseCategory {
+            name: "prop-unprovable-classical",
+            cases: prop_unprovable_classical_corpus(),
+        },
+        TheoremCaseCategory {
+            name: "prop-advanced-implicational",
+            cases: prop_advanced_implicational_corpus(),
+        },
+        TheoremCaseCategory {
+            name: "prop-advanced-mixed",
+            cases: prop_advanced_mixed_corpus(),
+        },
+    ]
+}
+
+pub fn propositional_corpus() -> Vec<TheoremCase> {
+    flatten_case_categories(&propositional_case_categories())
+}
+
 fn arr(a: Ty, b: Ty) -> Ty {
     Ty::Arr(Box::new(a), Box::new(b))
 }
@@ -83,1028 +716,307 @@ fn chain(mut tys: Vec<Ty>) -> Ty {
     t
 }
 
-pub fn implication_corpus() -> Vec<TheoremCase> {
-    let mut out = Vec::new();
-    let a = Ty::Atom(0);
-    let b = Ty::Atom(1);
-    let c = Ty::Atom(2);
-    let d = Ty::Atom(3);
+// ── Arithmetic corpus helpers ────────────────────────────────────────────────
+// Signature:  0 = Const(0),  S = Func{sym:0},  + = Func{sym:1}
 
-    // === 基本定理 (10個) ===
-
-    // 恒等関数
-    out.push(TheoremCase {
-        name: "I_identity".to_string(),
-        ctx: vec![],
-        target: arr(a.clone(), a.clone()),
-        expected_provable: true,
-    });
-
-    // K combinator (定数関数)
-    out.push(TheoremCase {
-        name: "K_const".to_string(),
-        ctx: vec![],
-        target: chain(vec![a.clone(), b.clone(), a.clone()]),
-        expected_provable: true,
-    });
-
-    // S combinator (関数適用)
-    out.push(TheoremCase {
-        name: "S_apply".to_string(),
-        ctx: vec![],
-        target: chain(vec![
-            arr(a.clone(), arr(b.clone(), c.clone())),
-            arr(a.clone(), b.clone()),
-            a.clone(),
-            c.clone(),
-        ]),
-        expected_provable: true,
-    });
-
-    // 関数適用
-    out.push(TheoremCase {
-        name: "App".to_string(),
-        ctx: vec![],
-        target: chain(vec![arr(a.clone(), b.clone()), a.clone(), b.clone()]),
-        expected_provable: true,
-    });
-
-    // 関数合成
-    out.push(TheoremCase {
-        name: "Comp".to_string(),
-        ctx: vec![],
-        target: chain(vec![
-            arr(b.clone(), c.clone()),
-            arr(a.clone(), b.clone()),
-            a.clone(),
-            c.clone(),
-        ]),
-        expected_provable: true,
-    });
-
-    // Flip (引数の順序交換)
-    out.push(TheoremCase {
-        name: "Flip".to_string(),
-        ctx: vec![],
-        target: chain(vec![
-            arr(a.clone(), arr(b.clone(), c.clone())),
-            b.clone(),
-            a.clone(),
-            c.clone(),
-        ]),
-        expected_provable: true,
-    });
-
-    // カリー化
-    out.push(TheoremCase {
-        name: "Curry".to_string(),
-        ctx: vec![],
-        target: chain(vec![
-            arr(
-                Ty::Prod(Box::new(a.clone()), Box::new(b.clone())),
-                c.clone(),
-            ),
-            a.clone(),
-            b.clone(),
-            c.clone(),
-        ]),
-        expected_provable: true,
-    });
-
-    // 非カリー化
-    out.push(TheoremCase {
-        name: "Uncurry".to_string(),
-        ctx: vec![],
-        target: chain(vec![
-            arr(a.clone(), arr(b.clone(), c.clone())),
-            Ty::Prod(Box::new(a.clone()), Box::new(b.clone())),
-            c.clone(),
-        ]),
-        expected_provable: true,
-    });
-
-    // W combinator (対角化)
-    out.push(TheoremCase {
-        name: "W_diag".to_string(),
-        ctx: vec![],
-        target: chain(vec![
-            arr(a.clone(), arr(a.clone(), b.clone())),
-            a.clone(),
-            b.clone(),
-        ]),
-        expected_provable: true,
-    });
-
-    // B combinator (合成の別形)
-    out.push(TheoremCase {
-        name: "B_comp".to_string(),
-        ctx: vec![],
-        target: chain(vec![
-            arr(b.clone(), c.clone()),
-            arr(a.clone(), b.clone()),
-            arr(a.clone(), c.clone()),
-        ]),
-        expected_provable: true,
-    });
-
-    // === 直積 (Product) の定理 (8個) ===
-
-    out.push(TheoremCase {
-        name: "Pair_intro".to_string(),
-        ctx: vec![],
-        target: chain(vec![
-            a.clone(),
-            b.clone(),
-            Ty::Prod(Box::new(a.clone()), Box::new(b.clone())),
-        ]),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "Fst".to_string(),
-        ctx: vec![],
-        target: arr(
-            Ty::Prod(Box::new(a.clone()), Box::new(b.clone())),
-            a.clone(),
-        ),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "Snd".to_string(),
-        ctx: vec![],
-        target: arr(
-            Ty::Prod(Box::new(a.clone()), Box::new(b.clone())),
-            b.clone(),
-        ),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "Pair_comm".to_string(),
-        ctx: vec![],
-        target: arr(
-            Ty::Prod(Box::new(a.clone()), Box::new(b.clone())),
-            Ty::Prod(Box::new(b.clone()), Box::new(a.clone())),
-        ),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "Pair_assoc".to_string(),
-        ctx: vec![],
-        target: arr(
-            Ty::Prod(
-                Box::new(a.clone()),
-                Box::new(Ty::Prod(Box::new(b.clone()), Box::new(c.clone()))),
-            ),
-            Ty::Prod(
-                Box::new(Ty::Prod(Box::new(a.clone()), Box::new(b.clone()))),
-                Box::new(c.clone()),
-            ),
-        ),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "Pair_dup".to_string(),
-        ctx: vec![],
-        target: arr(
-            a.clone(),
-            Ty::Prod(Box::new(a.clone()), Box::new(a.clone())),
-        ),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "Pair_map".to_string(),
-        ctx: vec![],
-        target: chain(vec![
-            Ty::Prod(
-                Box::new(arr(a.clone(), b.clone())),
-                Box::new(arr(a.clone(), c.clone())),
-            ),
-            a.clone(),
-            Ty::Prod(Box::new(b.clone()), Box::new(c.clone())),
-        ]),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "Pair_unit_left".to_string(),
-        ctx: vec![],
-        target: arr(
-            Ty::Prod(Box::new(Ty::Atom(99)), Box::new(a.clone())),
-            a.clone(),
-        ),
-        expected_provable: true,
-    });
-
-    // === 直和 (Sum) の定理 (10個) ===
-
-    out.push(TheoremCase {
-        name: "Sum_inl".to_string(),
-        ctx: vec![],
-        target: arr(a.clone(), Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "Sum_inr".to_string(),
-        ctx: vec![],
-        target: arr(b.clone(), Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "Sum_elim".to_string(),
-        ctx: vec![],
-        target: chain(vec![
-            arr(a.clone(), c.clone()),
-            arr(b.clone(), c.clone()),
-            Ty::Sum(Box::new(a.clone()), Box::new(b.clone())),
-            c.clone(),
-        ]),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "Sum_comm".to_string(),
-        ctx: vec![],
-        target: arr(
-            Ty::Sum(Box::new(a.clone()), Box::new(b.clone())),
-            Ty::Sum(Box::new(b.clone()), Box::new(a.clone())),
-        ),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "Sum_assoc".to_string(),
-        ctx: vec![],
-        target: arr(
-            Ty::Sum(
-                Box::new(a.clone()),
-                Box::new(Ty::Sum(Box::new(b.clone()), Box::new(c.clone()))),
-            ),
-            Ty::Sum(
-                Box::new(Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
-                Box::new(c.clone()),
-            ),
-        ),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "Sum_map".to_string(),
-        ctx: vec![],
-        target: chain(vec![
-            arr(a.clone(), c.clone()),
-            arr(b.clone(), d.clone()),
-            Ty::Sum(Box::new(a.clone()), Box::new(b.clone())),
-            Ty::Sum(Box::new(c.clone()), Box::new(d.clone())),
-        ]),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "Sum_prod_distrib_left".to_string(),
-        ctx: vec![],
-        target: arr(
-            Ty::Prod(
-                Box::new(Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
-                Box::new(c.clone()),
-            ),
-            Ty::Sum(
-                Box::new(Ty::Prod(Box::new(a.clone()), Box::new(c.clone()))),
-                Box::new(Ty::Prod(Box::new(b.clone()), Box::new(c.clone()))),
-            ),
-        ),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "Sum_prod_distrib_right".to_string(),
-        ctx: vec![],
-        target: arr(
-            Ty::Prod(
-                Box::new(a.clone()),
-                Box::new(Ty::Sum(Box::new(b.clone()), Box::new(c.clone()))),
-            ),
-            Ty::Sum(
-                Box::new(Ty::Prod(Box::new(a.clone()), Box::new(b.clone()))),
-                Box::new(Ty::Prod(Box::new(a.clone()), Box::new(c.clone()))),
-            ),
-        ),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "Sum_bot_left".to_string(),
-        ctx: vec![],
-        target: arr(Ty::Sum(Box::new(Ty::Bot), Box::new(a.clone())), a.clone()),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "Sum_bot_right".to_string(),
-        ctx: vec![],
-        target: arr(Ty::Sum(Box::new(a.clone()), Box::new(Ty::Bot)), a.clone()),
-        expected_provable: true,
-    });
-
-    // === 否定と矛盾 (Negation & Bot) の定理 (10個) ===
-
-    out.push(TheoremCase {
-        name: "ExFalso".to_string(),
-        ctx: vec![],
-        target: arr(Ty::Bot, a.clone()),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "Contradiction".to_string(),
-        ctx: vec![],
-        target: arr(
-            Ty::Prod(Box::new(a.clone()), Box::new(neg(a.clone()))),
-            Ty::Bot,
-        ),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "Explosion".to_string(),
-        ctx: vec![],
-        target: arr(
-            Ty::Prod(Box::new(a.clone()), Box::new(neg(a.clone()))),
-            b.clone(),
-        ),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "DoubleNeg_intro".to_string(),
-        ctx: vec![],
-        target: arr(a.clone(), neg(neg(a.clone()))),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "Contrapositive".to_string(),
-        ctx: vec![],
-        target: chain(vec![
-            arr(a.clone(), b.clone()),
-            arr(neg(b.clone()), neg(a.clone())),
-        ]),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "TripleNeg".to_string(),
-        ctx: vec![],
-        target: arr(neg(neg(neg(a.clone()))), neg(a.clone())),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "DeMorgan_and_to_or".to_string(),
-        ctx: vec![],
-        target: arr(
-            Ty::Prod(Box::new(neg(a.clone())), Box::new(neg(b.clone()))),
-            neg(Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
-        ),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "DeMorgan_or_to_and".to_string(),
-        ctx: vec![],
-        target: arr(
-            neg(Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
-            Ty::Prod(Box::new(neg(a.clone())), Box::new(neg(b.clone()))),
-        ),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "OrNeg_to_NegAnd".to_string(),
-        ctx: vec![],
-        target: arr(
-            Ty::Sum(Box::new(neg(a.clone())), Box::new(neg(b.clone()))),
-            neg(Ty::Prod(Box::new(a.clone()), Box::new(b.clone()))),
-        ),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "WeakLEM".to_string(),
-        ctx: vec![],
-        target: neg(neg(Ty::Sum(Box::new(a.clone()), Box::new(neg(a.clone()))))),
-        expected_provable: true,
-    });
-
-    // === 証明不可能な定理 (8個) ===
-
-    out.push(TheoremCase {
-        name: "UNPROV_atom".to_string(),
-        ctx: vec![],
-        target: a.clone(),
-        expected_provable: false,
-    });
-
-    out.push(TheoremCase {
-        name: "UNPROV_impl".to_string(),
-        ctx: vec![],
-        target: arr(a.clone(), b.clone()),
-        expected_provable: false,
-    });
-
-    out.push(TheoremCase {
-        name: "UNPROV_bot".to_string(),
-        ctx: vec![],
-        target: Ty::Bot,
-        expected_provable: false,
-    });
-
-    out.push(TheoremCase {
-        name: "UNPROV_Peirce".to_string(),
-        ctx: vec![],
-        target: arr(arr(arr(a.clone(), b.clone()), a.clone()), a.clone()),
-        expected_provable: false,
-    });
-
-    out.push(TheoremCase {
-        name: "UNPROV_DNE".to_string(),
-        ctx: vec![],
-        target: arr(neg(neg(a.clone())), a.clone()),
-        expected_provable: false,
-    });
-
-    out.push(TheoremCase {
-        name: "UNPROV_LEM".to_string(),
-        ctx: vec![],
-        target: Ty::Sum(Box::new(a.clone()), Box::new(neg(a.clone()))),
-        expected_provable: false,
-    });
-
-    out.push(TheoremCase {
-        name: "UNPROV_NegAndToOr".to_string(),
-        ctx: vec![],
-        target: arr(
-            neg(Ty::Prod(Box::new(a.clone()), Box::new(b.clone()))),
-            Ty::Sum(Box::new(neg(a.clone())), Box::new(neg(b.clone()))),
-        ),
-        expected_provable: false,
-    });
-
-    out.push(TheoremCase {
-        name: "UNPROV_Dummett".to_string(),
-        ctx: vec![],
-        target: Ty::Sum(
-            Box::new(arr(a.clone(), b.clone())),
-            Box::new(arr(b.clone(), a.clone())),
-        ),
-        expected_provable: false,
-    });
-
-    // === より難しい定理 (4個) ===
-
-    out.push(TheoremCase {
-        name: "HARD_LongChain".to_string(),
-        ctx: vec![],
-        target: chain(vec![
-            arr(d.clone(), Ty::Atom(4)),
-            arr(c.clone(), d.clone()),
-            arr(b.clone(), c.clone()),
-            arr(a.clone(), b.clone()),
-            a.clone(),
-            Ty::Atom(4),
-        ]),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "HARD_NestedSum".to_string(),
-        ctx: vec![],
-        target: arr(
-            Ty::Sum(
-                Box::new(Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
-                Box::new(Ty::Sum(Box::new(c.clone()), Box::new(d.clone()))),
-            ),
-            Ty::Sum(
-                Box::new(Ty::Sum(Box::new(a.clone()), Box::new(c.clone()))),
-                Box::new(Ty::Sum(Box::new(b.clone()), Box::new(d.clone()))),
-            ),
-        ),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "HARD_ContraProd".to_string(),
-        ctx: vec![],
-        target: chain(vec![
-            arr(
-                a.clone(),
-                Ty::Prod(Box::new(b.clone()), Box::new(c.clone())),
-            ),
-            arr(
-                Ty::Sum(Box::new(neg(b.clone())), Box::new(neg(c.clone()))),
-                neg(a.clone()),
-            ),
-        ]),
-        expected_provable: true,
-    });
-
-    out.push(TheoremCase {
-        name: "HARD_MixedDistrib".to_string(),
-        ctx: vec![],
-        target: arr(
-            Ty::Sum(
-                Box::new(Ty::Prod(Box::new(a.clone()), Box::new(b.clone()))),
-                Box::new(Ty::Prod(Box::new(c.clone()), Box::new(d.clone()))),
-            ),
-            Ty::Prod(
-                Box::new(Ty::Sum(Box::new(a.clone()), Box::new(c.clone()))),
-                Box::new(Ty::Sum(Box::new(b.clone()), Box::new(d.clone()))),
-            ),
-        ),
-        expected_provable: true,
-    });
-
-    out
+fn zero() -> FOTerm {
+    FOTerm::Const(0)
 }
 
-pub fn case_required_corpus() -> Vec<TheoremCase> {
-    implication_corpus()
+fn succ(x: FOTerm) -> FOTerm {
+    FOTerm::Func {
+        sym: 0,
+        args: vec![x],
+    }
+}
+
+fn add(x: FOTerm, y: FOTerm) -> FOTerm {
+    FOTerm::Func {
+        sym: 1,
+        args: vec![x, y],
+    }
+}
+
+/// ∀x. x+0=x
+fn ax_add_zero() -> Ty {
+    Ty::Forall(Box::new(Ty::Eq(
+        add(FOTerm::Var(0), zero()),
+        FOTerm::Var(0),
+    )))
+}
+
+/// ∀x∀y. x+S(y)=S(x+y)   (outer binder = x = Var(1), inner = y = Var(0))
+fn ax_add_succ() -> Ty {
+    Ty::Forall(Box::new(Ty::Forall(Box::new(Ty::Eq(
+        add(FOTerm::Var(1), succ(FOTerm::Var(0))),
+        succ(add(FOTerm::Var(1), FOTerm::Var(0))),
+    )))))
+}
+
+fn arith_case(name: &'static str, ctx: Vec<Ty>, target: Ty) -> TheoremCase {
+    theorem_case_with_ctx(name, ctx, target, true)
+}
+
+fn arith_unprovable_case(name: &'static str, ctx: Vec<Ty>, target: Ty) -> TheoremCase {
+    theorem_case_with_ctx(name, ctx, target, false)
+}
+
+pub fn arith_equality_core_corpus() -> Vec<TheoremCase> {
+    vec![
+        arith_case(
+            "A1_Refl",
+            vec![],
+            Ty::Forall(Box::new(Ty::Eq(FOTerm::Var(0), FOTerm::Var(0)))),
+        ),
+        arith_case(
+            "A2_EqId",
+            vec![],
+            Ty::Forall(Box::new(Ty::Forall(Box::new(Ty::Arr(
+                Box::new(Ty::Eq(FOTerm::Var(1), FOTerm::Var(0))),
+                Box::new(Ty::Eq(FOTerm::Var(1), FOTerm::Var(0))),
+            ))))),
+        ),
+        arith_case(
+            "A3_Symm",
+            vec![],
+            Ty::Forall(Box::new(Ty::Forall(Box::new(Ty::Arr(
+                Box::new(Ty::Eq(FOTerm::Var(1), FOTerm::Var(0))),
+                Box::new(Ty::Eq(FOTerm::Var(0), FOTerm::Var(1))),
+            ))))),
+        ),
+        arith_case(
+            "A4_Trans",
+            vec![],
+            Ty::Forall(Box::new(Ty::Forall(Box::new(Ty::Forall(Box::new(
+                Ty::Arr(
+                    Box::new(Ty::Eq(FOTerm::Var(2), FOTerm::Var(1))),
+                    Box::new(Ty::Arr(
+                        Box::new(Ty::Eq(FOTerm::Var(1), FOTerm::Var(0))),
+                        Box::new(Ty::Eq(FOTerm::Var(2), FOTerm::Var(0))),
+                    )),
+                ),
+            )))))),
+        ),
+        arith_case(
+            "A5_CongS",
+            vec![],
+            Ty::Forall(Box::new(Ty::Forall(Box::new(Ty::Arr(
+                Box::new(Ty::Eq(FOTerm::Var(1), FOTerm::Var(0))),
+                Box::new(Ty::Eq(succ(FOTerm::Var(1)), succ(FOTerm::Var(0)))),
+            ))))),
+        ),
+    ]
+}
+
+pub fn arith_equality_exists_corpus() -> Vec<TheoremCase> {
+    vec![
+        arith_case(
+            "A6_ExistsYeqX",
+            vec![],
+            Ty::Forall(Box::new(Ty::Exists(Box::new(Ty::Eq(
+                FOTerm::Var(0),
+                FOTerm::Var(1),
+            ))))),
+        ),
+        arith_case(
+            "A7_ExistsXeqY",
+            vec![],
+            Ty::Forall(Box::new(Ty::Exists(Box::new(Ty::Eq(
+                FOTerm::Var(1),
+                FOTerm::Var(0),
+            ))))),
+        ),
+        arith_case(
+            "A8_SymmProd",
+            vec![],
+            Ty::Forall(Box::new(Ty::Forall(Box::new(Ty::Arr(
+                Box::new(Ty::Eq(FOTerm::Var(1), FOTerm::Var(0))),
+                Box::new(Ty::Prod(
+                    Box::new(Ty::Eq(FOTerm::Var(1), FOTerm::Var(0))),
+                    Box::new(Ty::Eq(FOTerm::Var(0), FOTerm::Var(1))),
+                )),
+            ))))),
+        ),
+    ]
+}
+
+pub fn arith_add_zero_core_corpus() -> Vec<TheoremCase> {
+    vec![
+        arith_case(
+            "B1_AddZero",
+            vec![ax_add_zero()],
+            Ty::Forall(Box::new(Ty::Eq(
+                add(FOTerm::Var(0), zero()),
+                FOTerm::Var(0),
+            ))),
+        ),
+        arith_case(
+            "B4_GroundZero",
+            vec![ax_add_zero()],
+            Ty::Eq(add(zero(), zero()), zero()),
+        ),
+    ]
+}
+
+pub fn arith_add_zero_exists_corpus() -> Vec<TheoremCase> {
+    vec![
+        arith_case(
+            "B2_ExistsAddZero",
+            vec![ax_add_zero()],
+            Ty::Forall(Box::new(Ty::Exists(Box::new(Ty::Eq(
+                add(FOTerm::Var(1), zero()),
+                FOTerm::Var(0),
+            ))))),
+        ),
+        arith_case(
+            "B3_ExistsNeutral",
+            vec![ax_add_zero()],
+            Ty::Forall(Box::new(Ty::Exists(Box::new(Ty::Eq(
+                add(FOTerm::Var(1), FOTerm::Var(0)),
+                FOTerm::Var(1),
+            ))))),
+        ),
+        arith_case(
+            "B5_ExistsProd",
+            vec![ax_add_zero()],
+            Ty::Forall(Box::new(Ty::Exists(Box::new(Ty::Prod(
+                Box::new(Ty::Eq(add(FOTerm::Var(1), zero()), FOTerm::Var(0))),
+                Box::new(Ty::Eq(add(FOTerm::Var(0), zero()), FOTerm::Var(1))),
+            ))))),
+        ),
+    ]
+}
+
+pub fn arith_add_succ_general_corpus() -> Vec<TheoremCase> {
+    let s0 = succ(zero());
+
+    vec![
+        arith_case(
+            "C1_AddSucc",
+            vec![ax_add_zero(), ax_add_succ()],
+            Ty::Forall(Box::new(Ty::Forall(Box::new(Ty::Eq(
+                add(FOTerm::Var(1), succ(FOTerm::Var(0))),
+                succ(add(FOTerm::Var(1), FOTerm::Var(0))),
+            ))))),
+        ),
+        arith_case(
+            "C2_AddOne",
+            vec![ax_add_zero(), ax_add_succ()],
+            Ty::Forall(Box::new(Ty::Eq(
+                add(FOTerm::Var(0), s0),
+                succ(FOTerm::Var(0)),
+            ))),
+        ),
+    ]
+}
+
+pub fn arith_add_succ_ground_corpus() -> Vec<TheoremCase> {
+    let s0 = succ(zero());
+    let s1 = succ(s0.clone());
+
+    vec![
+        arith_case(
+            "C3_OnePlusOne",
+            vec![ax_add_zero(), ax_add_succ()],
+            Ty::Eq(add(s0.clone(), s0), s1),
+        ),
+        arith_case(
+            "C4_ExistsAddOne",
+            vec![ax_add_zero(), ax_add_succ()],
+            Ty::Forall(Box::new(Ty::Exists(Box::new(Ty::Eq(
+                add(FOTerm::Var(1), succ(zero())),
+                succ(FOTerm::Var(0)),
+            ))))),
+        ),
+    ]
+}
+
+pub fn arith_induction_gap_corpus() -> Vec<TheoremCase> {
+    vec![
+        arith_unprovable_case(
+            "U1_LeftUnit",
+            vec![ax_add_zero(), ax_add_succ()],
+            Ty::Forall(Box::new(Ty::Eq(
+                add(zero(), FOTerm::Var(0)),
+                FOTerm::Var(0),
+            ))),
+        ),
+        arith_unprovable_case(
+            "U2_Comm",
+            vec![ax_add_zero(), ax_add_succ()],
+            Ty::Forall(Box::new(Ty::Forall(Box::new(Ty::Eq(
+                add(FOTerm::Var(1), FOTerm::Var(0)),
+                add(FOTerm::Var(0), FOTerm::Var(1)),
+            ))))),
+        ),
+        arith_unprovable_case(
+            "U3_Assoc",
+            vec![ax_add_zero(), ax_add_succ()],
+            Ty::Forall(Box::new(Ty::Forall(Box::new(Ty::Forall(Box::new(
+                Ty::Eq(
+                    add(add(FOTerm::Var(2), FOTerm::Var(1)), FOTerm::Var(0)),
+                    add(FOTerm::Var(2), add(FOTerm::Var(1), FOTerm::Var(0))),
+                ),
+            )))))),
+        ),
+    ]
+}
+
+pub fn arithmetic_case_categories() -> Vec<TheoremCaseCategory> {
+    vec![
+        TheoremCaseCategory {
+            name: "arith-equality-core",
+            cases: arith_equality_core_corpus(),
+        },
+        TheoremCaseCategory {
+            name: "arith-equality-exists",
+            cases: arith_equality_exists_corpus(),
+        },
+        TheoremCaseCategory {
+            name: "arith-add-zero-core",
+            cases: arith_add_zero_core_corpus(),
+        },
+        TheoremCaseCategory {
+            name: "arith-add-zero-exists",
+            cases: arith_add_zero_exists_corpus(),
+        },
+        TheoremCaseCategory {
+            name: "arith-add-succ-general",
+            cases: arith_add_succ_general_corpus(),
+        },
+        TheoremCaseCategory {
+            name: "arith-add-succ-ground",
+            cases: arith_add_succ_ground_corpus(),
+        },
+        TheoremCaseCategory {
+            name: "arith-induction-gap",
+            cases: arith_induction_gap_corpus(),
+        },
+    ]
+}
+
+/// Corpus covering FOL + equality + Robinson arithmetic (no induction).
+pub fn arith_corpus() -> Vec<TheoremCase> {
+    flatten_case_categories(&arithmetic_case_categories())
+}
+
+pub fn theorem_case_categories() -> Vec<TheoremCaseCategory> {
+    let mut categories = propositional_case_categories();
+    categories.extend(arithmetic_case_categories());
+    categories
+}
+
+pub fn theorem_case_category(name: &str) -> Option<TheoremCaseCategory> {
+    theorem_case_categories()
         .into_iter()
-        .filter(|c| {
-            matches!(
-                c.name.as_str(),
-                "Sum_elim"
-                    | "Sum_comm"
-                    | "Sum_assoc"
-                    | "Sum_map"
-                    | "Sum_prod_distrib_left"
-                    | "Sum_prod_distrib_right"
-                    | "Sum_bot_left"
-                    | "Sum_bot_right"
-                    | "HARD_NestedSum"
-                    | "HARD_ContraProd"
-                    | "HARD_MixedDistrib"
-            )
-        })
+        .find(|category| category.name == name)
+}
+
+pub fn theorem_case_category_names() -> Vec<&'static str> {
+    theorem_case_categories()
+        .into_iter()
+        .map(|category| category.name)
         .collect()
-}
-
-pub fn benchmark20_corpus() -> Vec<TheoremCase> {
-    let a = Ty::Atom(0);
-    let b = Ty::Atom(1);
-    let c = Ty::Atom(2);
-    let d = Ty::Atom(3);
-
-    vec![
-        TheoremCase {
-            name: "01_I".to_string(),
-            ctx: vec![],
-            target: arr(a.clone(), a.clone()),
-            expected_provable: true,
-        },
-        TheoremCase {
-            name: "02_K".to_string(),
-            ctx: vec![],
-            target: chain(vec![a.clone(), b.clone(), a.clone()]),
-            expected_provable: true,
-        },
-        TheoremCase {
-            name: "03_App".to_string(),
-            ctx: vec![],
-            target: chain(vec![arr(a.clone(), b.clone()), a.clone(), b.clone()]),
-            expected_provable: true,
-        },
-        TheoremCase {
-            name: "04_Comp".to_string(),
-            ctx: vec![],
-            target: chain(vec![
-                arr(b.clone(), c.clone()),
-                arr(a.clone(), b.clone()),
-                a.clone(),
-                c.clone(),
-            ]),
-            expected_provable: true,
-        },
-        TheoremCase {
-            name: "05_ProdElimL".to_string(),
-            ctx: vec![],
-            target: arr(
-                Ty::Prod(Box::new(a.clone()), Box::new(b.clone())),
-                a.clone(),
-            ),
-            expected_provable: true,
-        },
-        TheoremCase {
-            name: "06_ProdElimR".to_string(),
-            ctx: vec![],
-            target: arr(
-                Ty::Prod(Box::new(a.clone()), Box::new(b.clone())),
-                b.clone(),
-            ),
-            expected_provable: true,
-        },
-        TheoremCase {
-            name: "07_DupPair".to_string(),
-            ctx: vec![],
-            target: arr(
-                a.clone(),
-                Ty::Prod(Box::new(a.clone()), Box::new(a.clone())),
-            ),
-            expected_provable: true,
-        },
-        TheoremCase {
-            name: "08_ProdComm".to_string(),
-            ctx: vec![],
-            target: arr(
-                Ty::Prod(Box::new(a.clone()), Box::new(b.clone())),
-                Ty::Prod(Box::new(b.clone()), Box::new(a.clone())),
-            ),
-            expected_provable: true,
-        },
-        TheoremCase {
-            name: "09_ProdAssoc".to_string(),
-            ctx: vec![],
-            target: arr(
-                Ty::Prod(
-                    Box::new(a.clone()),
-                    Box::new(Ty::Prod(Box::new(b.clone()), Box::new(c.clone()))),
-                ),
-                Ty::Prod(
-                    Box::new(Ty::Prod(Box::new(a.clone()), Box::new(b.clone()))),
-                    Box::new(c.clone()),
-                ),
-            ),
-            expected_provable: true,
-        },
-        TheoremCase {
-            name: "10_PairMap".to_string(),
-            ctx: vec![],
-            target: chain(vec![
-                Ty::Prod(
-                    Box::new(arr(a.clone(), b.clone())),
-                    Box::new(arr(a.clone(), c.clone())),
-                ),
-                a.clone(),
-                Ty::Prod(Box::new(b.clone()), Box::new(c.clone())),
-            ]),
-            expected_provable: true,
-        },
-        TheoremCase {
-            name: "11_SumInl".to_string(),
-            ctx: vec![],
-            target: arr(a.clone(), Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
-            expected_provable: true,
-        },
-        TheoremCase {
-            name: "12_SumInr".to_string(),
-            ctx: vec![],
-            target: arr(b.clone(), Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
-            expected_provable: true,
-        },
-        TheoremCase {
-            name: "13_SumComm".to_string(),
-            ctx: vec![],
-            target: arr(
-                Ty::Sum(Box::new(a.clone()), Box::new(b.clone())),
-                Ty::Sum(Box::new(b.clone()), Box::new(a.clone())),
-            ),
-            expected_provable: true,
-        },
-        TheoremCase {
-            name: "14_SumAssoc".to_string(),
-            ctx: vec![],
-            target: arr(
-                Ty::Sum(
-                    Box::new(a.clone()),
-                    Box::new(Ty::Sum(Box::new(b.clone()), Box::new(c.clone()))),
-                ),
-                Ty::Sum(
-                    Box::new(Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
-                    Box::new(c.clone()),
-                ),
-            ),
-            expected_provable: true,
-        },
-        TheoremCase {
-            name: "15_SumElim".to_string(),
-            ctx: vec![],
-            target: chain(vec![
-                arr(a.clone(), c.clone()),
-                arr(b.clone(), c.clone()),
-                Ty::Sum(Box::new(a.clone()), Box::new(b.clone())),
-                c.clone(),
-            ]),
-            expected_provable: true,
-        },
-        TheoremCase {
-            name: "16_ExFalso".to_string(),
-            ctx: vec![],
-            target: arr(Ty::Bot, a.clone()),
-            expected_provable: true,
-        },
-        TheoremCase {
-            name: "17_AndNotToBot".to_string(),
-            ctx: vec![],
-            target: arr(
-                Ty::Prod(Box::new(a.clone()), Box::new(neg(a.clone()))),
-                Ty::Bot,
-            ),
-            expected_provable: true,
-        },
-        TheoremCase {
-            name: "18_Explosion".to_string(),
-            ctx: vec![],
-            target: arr(
-                Ty::Prod(Box::new(a.clone()), Box::new(neg(a.clone()))),
-                d.clone(),
-            ),
-            expected_provable: true,
-        },
-        TheoremCase {
-            name: "19_Contrapositive".to_string(),
-            ctx: vec![],
-            target: chain(vec![
-                arr(a.clone(), b.clone()),
-                arr(neg(b.clone()), neg(a.clone())),
-            ]),
-            expected_provable: true,
-        },
-        TheoremCase {
-            name: "20_DeMorganWeak".to_string(),
-            ctx: vec![],
-            target: arr(
-                Ty::Prod(Box::new(neg(a.clone())), Box::new(neg(b.clone()))),
-                neg(Ty::Sum(Box::new(a), Box::new(b))),
-            ),
-            expected_provable: true,
-        },
-    ]
-}
-
-/// Benchmark30: より難しい定理10個を追加
-pub fn benchmark30_corpus() -> Vec<TheoremCase> {
-    let mut cases = benchmark20_corpus();
-
-    let a = Ty::Atom(0);
-    let b = Ty::Atom(1);
-    let c = Ty::Atom(2);
-    let d = Ty::Atom(3);
-    let e = Ty::Atom(4);
-    let f = Ty::Atom(5);
-
-    // 難しい定理10個を追加
-    cases.extend(vec![
-        // B21: 多重ネストcase (深さ3)
-        TheoremCase {
-            name: "B21_TripleNested".to_string(),
-            ctx: vec![],
-            target: arr(
-                Ty::Sum(
-                    Box::new(a.clone()),
-                    Box::new(Ty::Sum(Box::new(b.clone()), Box::new(c.clone()))),
-                ),
-                Ty::Sum(
-                    Box::new(Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
-                    Box::new(c.clone()),
-                ),
-            ),
-            expected_provable: true,
-        },
-        // B22: 長い関数合成チェーン (6段)
-        TheoremCase {
-            name: "B22_LongChain".to_string(),
-            ctx: vec![],
-            target: chain(vec![
-                arr(e.clone(), f.clone()),
-                arr(d.clone(), e.clone()),
-                arr(c.clone(), d.clone()),
-                arr(b.clone(), c.clone()),
-                arr(a.clone(), b.clone()),
-                a.clone(),
-                f.clone(),
-            ]),
-            expected_provable: true,
-        },
-        // B23: 積と和の複雑な分配
-        TheoremCase {
-            name: "B23_ProdSumDistrib".to_string(),
-            ctx: vec![],
-            target: arr(
-                Ty::Prod(
-                    Box::new(Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
-                    Box::new(c.clone()),
-                ),
-                Ty::Sum(
-                    Box::new(Ty::Prod(Box::new(a.clone()), Box::new(c.clone()))),
-                    Box::new(Ty::Prod(Box::new(b.clone()), Box::new(c.clone()))),
-                ),
-            ),
-            expected_provable: true,
-        },
-        // B24: ネストした否定
-        TheoremCase {
-            name: "B24_DoubleNegIntro".to_string(),
-            ctx: vec![],
-            target: arr(a.clone(), neg(neg(a.clone()))),
-            expected_provable: true,
-        },
-        // B25: 複雑な対偶
-        TheoremCase {
-            name: "B25_ContrapositiveProd".to_string(),
-            ctx: vec![],
-            target: chain(vec![
-                arr(
-                    a.clone(),
-                    Ty::Prod(Box::new(b.clone()), Box::new(c.clone())),
-                ),
-                arr(
-                    Ty::Sum(Box::new(neg(b.clone())), Box::new(neg(c.clone()))),
-                    neg(a.clone()),
-                ),
-            ]),
-            expected_provable: true,
-        },
-        // B26: 積の深いネスト
-        TheoremCase {
-            name: "B26_DeepProdNest".to_string(),
-            ctx: vec![],
-            target: arr(
-                Ty::Prod(
-                    Box::new(Ty::Prod(Box::new(a.clone()), Box::new(b.clone()))),
-                    Box::new(Ty::Prod(Box::new(c.clone()), Box::new(d.clone()))),
-                ),
-                Ty::Prod(
-                    Box::new(Ty::Prod(Box::new(a.clone()), Box::new(c.clone()))),
-                    Box::new(Ty::Prod(Box::new(b.clone()), Box::new(d.clone()))),
-                ),
-            ),
-            expected_provable: true,
-        },
-        // B27: 和と積の混合
-        TheoremCase {
-            name: "B27_SumProdMixed".to_string(),
-            ctx: vec![],
-            target: arr(
-                Ty::Sum(
-                    Box::new(Ty::Prod(Box::new(a.clone()), Box::new(b.clone()))),
-                    Box::new(Ty::Prod(Box::new(c.clone()), Box::new(d.clone()))),
-                ),
-                Ty::Prod(
-                    Box::new(Ty::Sum(Box::new(a.clone()), Box::new(c.clone()))),
-                    Box::new(Ty::Sum(Box::new(b.clone()), Box::new(d.clone()))),
-                ),
-            ),
-            expected_provable: true, // 直観主義論理で証明可能
-        },
-        // B28: 長い否定連鎖
-        TheoremCase {
-            name: "B28_NegChain".to_string(),
-            ctx: vec![],
-            target: chain(vec![
-                arr(a.clone(), b.clone()),
-                arr(b.clone(), c.clone()),
-                arr(c.clone(), d.clone()),
-                arr(neg(d.clone()), neg(a.clone())),
-            ]),
-            expected_provable: true,
-        },
-        // B29: De Morganの完全形
-        TheoremCase {
-            name: "B29_DeMorganFull".to_string(),
-            ctx: vec![],
-            target: arr(
-                neg(Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
-                Ty::Prod(Box::new(neg(a.clone())), Box::new(neg(b.clone()))),
-            ),
-            expected_provable: true,
-        },
-        // B30: 複雑な爆発原理
-        TheoremCase {
-            name: "B30_ComplexExplosion".to_string(),
-            ctx: vec![],
-            target: arr(
-                Ty::Prod(
-                    Box::new(Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
-                    Box::new(Ty::Prod(Box::new(neg(a.clone())), Box::new(neg(b.clone())))),
-                ),
-                c.clone(),
-            ),
-            expected_provable: true,
-        },
-    ]);
-
-    cases
-}
-
-/// 直観主義では証明不可能な定理のテストセット (古典論理では真)
-pub fn unprovable_corpus() -> Vec<TheoremCase> {
-    let a = Ty::Atom(0);
-    let b = Ty::Atom(1);
-    let c = Ty::Atom(2);
-
-    vec![
-        // 排中律 (Law of Excluded Middle)
-        TheoremCase {
-            name: "UNPROV_LEM".to_string(),
-            ctx: vec![],
-            target: Ty::Sum(Box::new(a.clone()), Box::new(neg(a.clone()))),
-            expected_provable: false,
-        },
-        // 二重否定除去 (Double Negation Elimination)
-        TheoremCase {
-            name: "UNPROV_DNE".to_string(),
-            ctx: vec![],
-            target: arr(neg(neg(a.clone())), a.clone()),
-            expected_provable: false,
-        },
-        // パースの法則 (Peirce's Law)
-        TheoremCase {
-            name: "UNPROV_Peirce".to_string(),
-            ctx: vec![],
-            target: arr(arr(arr(a.clone(), b.clone()), a.clone()), a.clone()),
-            expected_provable: false,
-        },
-        // ゲーデル・ダメット論理の公理
-        TheoremCase {
-            name: "UNPROV_Dummett".to_string(),
-            ctx: vec![],
-            target: Ty::Sum(
-                Box::new(arr(a.clone(), b.clone())),
-                Box::new(arr(b.clone(), a.clone())),
-            ),
-            expected_provable: false,
-        },
-        // ド・モルガンの法則の逆（積から和へ）
-        TheoremCase {
-            name: "UNPROV_DeMorganReverse".to_string(),
-            ctx: vec![],
-            target: arr(
-                neg(Ty::Prod(Box::new(a.clone()), Box::new(b.clone()))),
-                Ty::Sum(Box::new(neg(a.clone())), Box::new(neg(b.clone()))),
-            ),
-            expected_provable: false,
-        },
-        // 対偶の逆
-        TheoremCase {
-            name: "UNPROV_ContraReverse".to_string(),
-            ctx: vec![],
-            target: chain(vec![
-                arr(neg(a.clone()), neg(b.clone())),
-                arr(b.clone(), a.clone()),
-            ]),
-            expected_provable: false,
-        },
-        // 弱い排中律（直観主義では証明可能）
-        TheoremCase {
-            name: "PROV_WeakLEM".to_string(),
-            ctx: vec![],
-            target: neg(neg(Ty::Sum(Box::new(a.clone()), Box::new(neg(a.clone()))))),
-            expected_provable: true,
-        },
-        // ド・モルガン（和から積へ、直観主義で証明可能）
-        TheoremCase {
-            name: "PROV_OrNotToNotAnd".to_string(),
-            ctx: vec![],
-            target: arr(
-                Ty::Sum(Box::new(neg(a.clone())), Box::new(neg(b.clone()))),
-                neg(Ty::Prod(Box::new(a.clone()), Box::new(b.clone()))),
-            ),
-            expected_provable: true,
-        },
-        // 三段論法の特殊形（直観主義で証明可能）
-        TheoremCase {
-            name: "PROV_Syllogism".to_string(),
-            ctx: vec![],
-            target: chain(vec![
-                arr(a.clone(), b.clone()),
-                arr(b.clone(), c.clone()),
-                arr(a.clone(), c.clone()),
-            ]),
-            expected_provable: true,
-        },
-        // 和の対称性の別表現（直観主義で証明可能）
-        TheoremCase {
-            name: "PROV_SumSymm".to_string(),
-            ctx: vec![],
-            target: arr(
-                Ty::Sum(
-                    Box::new(Ty::Sum(Box::new(a.clone()), Box::new(b.clone()))),
-                    Box::new(c.clone()),
-                ),
-                Ty::Sum(
-                    Box::new(Ty::Sum(Box::new(b.clone()), Box::new(a.clone()))),
-                    Box::new(c.clone()),
-                ),
-            ),
-            expected_provable: true,
-        },
-    ]
 }
 
 pub fn run_corpus(
@@ -1113,7 +1025,7 @@ pub fn run_corpus(
     repeats: usize,
     limit: Option<usize>,
 ) -> CorpusReport {
-    let mut cases = implication_corpus();
+    let mut cases = propositional_corpus();
     if let Some(limit) = limit {
         cases.truncate(limit.min(cases.len()));
     }
@@ -1254,7 +1166,7 @@ pub fn split_corpus(
     train_ratio_den: usize,
     limit: Option<usize>,
 ) -> (Vec<TheoremCase>, Vec<TheoremCase>) {
-    let mut cases = implication_corpus();
+    let mut cases = propositional_corpus();
     if let Some(limit) = limit {
         cases.truncate(limit.min(cases.len()));
     }
@@ -1457,7 +1369,7 @@ mod tests {
 
     #[test]
     fn corpus_labels_are_machine_checked() {
-        let cases = implication_corpus();
+        let cases = propositional_corpus();
         for c in &cases {
             let decided = is_intuitionistic_theorem(&c.ctx, &c.target);
             assert_eq!(
@@ -1470,7 +1382,7 @@ mod tests {
 
     #[test]
     fn impossible_cases_are_not_theorems() {
-        for c in implication_corpus()
+        for c in propositional_corpus()
             .into_iter()
             .filter(|x| x.name.starts_with("IMPOSSIBLE_"))
         {
@@ -1480,7 +1392,7 @@ mod tests {
 
     #[test]
     fn impossible_cases_have_small_kripke_countermodels() {
-        for c in implication_corpus()
+        for c in propositional_corpus()
             .into_iter()
             .filter(|x| x.name.starts_with("IMPOSSIBLE_"))
         {
@@ -1490,9 +1402,8 @@ mod tests {
     }
 
     #[test]
-    fn benchmark20_labels_are_machine_checked() {
-        let cases = benchmark20_corpus();
-        assert_eq!(cases.len(), 20);
+    fn arith_corpus_labels_are_machine_checked() {
+        let cases = arith_corpus();
         for c in &cases {
             let decided = is_intuitionistic_theorem(&c.ctx, &c.target);
             assert_eq!(
@@ -1500,6 +1411,93 @@ mod tests {
                 "label mismatch: {} expected={} decided={}",
                 c.name, c.expected_provable, decided
             );
+        }
+    }
+
+    #[test]
+    fn theorem_case_categories_have_expected_names() {
+        let names = theorem_case_category_names();
+        assert_eq!(
+            names,
+            vec![
+                "prop-implicational",
+                "prop-currying",
+                "prop-product",
+                "prop-sum-basic",
+                "prop-sum-distrib",
+                "prop-negation-core",
+                "prop-negation-demorgan",
+                "prop-unprovable-basic",
+                "prop-unprovable-classical",
+                "prop-advanced-implicational",
+                "prop-advanced-mixed",
+                "arith-equality-core",
+                "arith-equality-exists",
+                "arith-add-zero-core",
+                "arith-add-zero-exists",
+                "arith-add-succ-general",
+                "arith-add-succ-ground",
+                "arith-induction-gap",
+            ]
+        );
+    }
+
+    #[test]
+    fn theorem_case_category_lookup_works() {
+        let arith = theorem_case_category("arith-add-succ-ground")
+            .expect("arith-add-succ-ground category exists");
+        assert!(arith.cases.iter().any(|c| c.name == "C3_OnePlusOne"));
+    }
+
+    #[test]
+    fn theorem_case_categories_are_disjoint() {
+        let mut seen = std::collections::BTreeMap::new();
+        for category in theorem_case_categories() {
+            for case in category.cases {
+                let prev = seen.insert(case.name.clone(), category.name);
+                assert!(
+                    prev.is_none(),
+                    "case {} appears in both {} and {}",
+                    case.name,
+                    prev.unwrap_or(""),
+                    category.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn aggregate_corpora_match_category_unions() {
+        let prop_from_categories: Vec<_> =
+            flatten_case_categories(&propositional_case_categories())
+                .into_iter()
+                .map(|case| case.name)
+                .collect();
+        let prop_direct: Vec<_> = propositional_corpus()
+            .into_iter()
+            .map(|case| case.name)
+            .collect();
+        assert_eq!(prop_from_categories, prop_direct);
+
+        let arith_from_categories: Vec<_> = flatten_case_categories(&arithmetic_case_categories())
+            .into_iter()
+            .map(|case| case.name)
+            .collect();
+        let arith_direct: Vec<_> = arith_corpus().into_iter().map(|case| case.name).collect();
+        assert_eq!(arith_from_categories, arith_direct);
+    }
+
+    #[test]
+    fn theorem_case_categories_labels_are_machine_checked() {
+        for category in theorem_case_categories() {
+            for c in &category.cases {
+                let decided = is_intuitionistic_theorem(&c.ctx, &c.target);
+                assert_eq!(
+                    decided, c.expected_provable,
+                    "label mismatch in category {}: {} expected={} decided={}",
+                    category.name, c.name, c.expected_provable, decided
+                );
+            }
         }
     }
 }
