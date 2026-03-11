@@ -1,12 +1,27 @@
-use crate::kernel::{Tm, Ty};
+use crate::kernel::{FOTerm, Tm, Ty};
 
 use super::PTm;
+
+pub fn pretty_fo_term(tm: &FOTerm) -> String {
+    match tm {
+        FOTerm::Var(i) => format!("t{i}"),
+        FOTerm::Const(c) => format!("c{c}"),
+        FOTerm::Func { sym, args } => {
+            let arg_strs: Vec<String> = args.iter().map(pretty_fo_term).collect();
+            format!("f{}({})", sym, arg_strs.join(", "))
+        }
+    }
+}
 
 pub fn pretty_ty(ty: &Ty) -> String {
     fn go(ty: &Ty, p: u8) -> String {
         match ty {
             Ty::Atom(i) => format!("A{i}"),
             Ty::Bot => "Bot".to_string(),
+            Ty::Pred { sym, args } => {
+                let arg_strs: Vec<String> = args.iter().map(pretty_fo_term).collect();
+                format!("P{}({})", sym, arg_strs.join(", "))
+            }
             Ty::Prod(a, b) => {
                 let s = format!("{} * {}", go(a, 2), go(b, 2));
                 if p > 2 { format!("({s})") } else { s }
@@ -18,6 +33,18 @@ pub fn pretty_ty(ty: &Ty) -> String {
             Ty::Arr(a, b) => {
                 let s = format!("{} -> {}", go(a, 2), go(b, 0));
                 if p > 0 { format!("({s})") } else { s }
+            }
+            Ty::Forall(body) => {
+                let s = format!("forall. {}", go(body, 0));
+                if p > 0 { format!("({s})") } else { s }
+            }
+            Ty::Exists(body) => {
+                let s = format!("exists. {}", go(body, 0));
+                if p > 0 { format!("({s})") } else { s }
+            }
+            Ty::Eq(s, t) => {
+                let s = format!("{} = {}", pretty_fo_term(s), pretty_fo_term(t));
+                if p > 2 { format!("({s})") } else { s }
             }
         }
     }
@@ -69,6 +96,40 @@ pub fn pretty_tm(tm: &Tm) -> String {
                 go(bot_term, depth, 2),
                 pretty_ty(target_ty)
             ),
+            Tm::TLam { body } => {
+                let s = format!("\\T. {}", go(body, depth, 0));
+                if p > 0 { format!("({s})") } else { s }
+            }
+            Tm::TApp { term, witness } => {
+                let s = format!("{} [{}]", go(term, depth, 1), pretty_fo_term(witness));
+                if p > 1 { format!("({s})") } else { s }
+            }
+            Tm::Pack {
+                witness,
+                body,
+                exists_ty,
+            } => format!(
+                "pack({}, {}) as {}",
+                pretty_fo_term(witness),
+                go(body, depth, 0),
+                pretty_ty(exists_ty)
+            ),
+            Tm::Unpack { scrut, body } => format!(
+                "unpack {} in {}",
+                go(scrut, depth, 2),
+                go(body, depth + 1, 0)
+            ),
+            Tm::Refl { term } => format!("refl({})", pretty_fo_term(term)),
+            Tm::Subst {
+                eq_proof,
+                body,
+                motive,
+            } => format!(
+                "subst({}, {}, {})",
+                go(eq_proof, depth, 2),
+                go(body, depth, 2),
+                pretty_ty(motive)
+            ),
         }
     }
     go(tm, 0, 0)
@@ -111,6 +172,40 @@ pub fn pretty_ptm(tm: &PTm) -> String {
                 go(bot_term, depth, 2),
                 pretty_ty(target_ty)
             ),
+            PTm::TLam { body } => {
+                let s = format!("\\T. {}", go(body, depth, 0));
+                if p > 0 { format!("({s})") } else { s }
+            }
+            PTm::TApp { term, witness } => {
+                let s = format!("{} [{}]", go(term, depth, 1), pretty_fo_term(witness));
+                if p > 1 { format!("({s})") } else { s }
+            }
+            PTm::Pack {
+                witness,
+                body,
+                exists_ty,
+            } => format!(
+                "pack({}, {}) as {}",
+                pretty_fo_term(witness),
+                go(body, depth, 0),
+                pretty_ty(exists_ty)
+            ),
+            PTm::Unpack { scrut, body } => format!(
+                "unpack {} in {}",
+                go(scrut, depth, 2),
+                go(body, depth + 1, 0)
+            ),
+            PTm::Refl { term } => format!("refl({})", pretty_fo_term(term)),
+            PTm::Subst {
+                eq_proof,
+                body,
+                motive,
+            } => format!(
+                "subst({}, {}, {})",
+                go(eq_proof, depth, 2),
+                go(body, depth, 2),
+                pretty_ty(motive)
+            ),
         }
     }
     go(tm, 0, 0)
@@ -122,6 +217,10 @@ pub fn pretty_ty_unicode(ty: &Ty) -> String {
         match ty {
             Ty::Atom(i) => format!("A{i}"),
             Ty::Bot => "⊥".to_string(),
+            Ty::Pred { sym, args } => {
+                let arg_strs: Vec<String> = args.iter().map(pretty_fo_term).collect();
+                format!("P{}({})", sym, arg_strs.join(", "))
+            }
             Ty::Prod(a, b) => {
                 let s = format!("{} ∧ {}", go(a, 2), go(b, 2));
                 if p > 2 { format!("({s})") } else { s }
@@ -133,6 +232,18 @@ pub fn pretty_ty_unicode(ty: &Ty) -> String {
             Ty::Arr(a, b) => {
                 let s = format!("{} → {}", go(a, 2), go(b, 0));
                 if p > 0 { format!("({s})") } else { s }
+            }
+            Ty::Forall(body) => {
+                let s = format!("∀. {}", go(body, 0));
+                if p > 0 { format!("({s})") } else { s }
+            }
+            Ty::Exists(body) => {
+                let s = format!("∃. {}", go(body, 0));
+                if p > 0 { format!("({s})") } else { s }
+            }
+            Ty::Eq(s, t) => {
+                let s = format!("{} ＝ {}", pretty_fo_term(s), pretty_fo_term(t));
+                if p > 2 { format!("({s})") } else { s }
             }
         }
     }
@@ -188,6 +299,40 @@ pub fn pretty_tm_unicode(tm: &Tm) -> String {
                 go(bot_term, depth, 2),
                 pretty_ty_unicode(target_ty)
             ),
+            Tm::TLam { body } => {
+                let s = format!("Λ. {}", go(body, depth, 0));
+                if p > 0 { format!("({s})") } else { s }
+            }
+            Tm::TApp { term, witness } => {
+                let s = format!("{} [{}]", go(term, depth, 1), pretty_fo_term(witness));
+                if p > 1 { format!("({s})") } else { s }
+            }
+            Tm::Pack {
+                witness,
+                body,
+                exists_ty,
+            } => format!(
+                "pack({}, {}) as {}",
+                pretty_fo_term(witness),
+                go(body, depth, 0),
+                pretty_ty_unicode(exists_ty)
+            ),
+            Tm::Unpack { scrut, body } => format!(
+                "unpack {} in {}",
+                go(scrut, depth, 2),
+                go(body, depth + 1, 0)
+            ),
+            Tm::Refl { term } => format!("refl({})", pretty_fo_term(term)),
+            Tm::Subst {
+                eq_proof,
+                body,
+                motive,
+            } => format!(
+                "subst({}, {}, {})",
+                go(eq_proof, depth, 2),
+                go(body, depth, 2),
+                pretty_ty_unicode(motive)
+            ),
         }
     }
     go(tm, 0, 0)
@@ -242,6 +387,40 @@ pub fn pretty_ptm_unicode(tm: &PTm) -> String {
                 "absurd {} : {}",
                 go(bot_term, depth, 2),
                 pretty_ty_unicode(target_ty)
+            ),
+            PTm::TLam { body } => {
+                let s = format!("Λ. {}", go(body, depth, 0));
+                if p > 0 { format!("({s})") } else { s }
+            }
+            PTm::TApp { term, witness } => {
+                let s = format!("{} [{}]", go(term, depth, 1), pretty_fo_term(witness));
+                if p > 1 { format!("({s})") } else { s }
+            }
+            PTm::Pack {
+                witness,
+                body,
+                exists_ty,
+            } => format!(
+                "pack({}, {}) as {}",
+                pretty_fo_term(witness),
+                go(body, depth, 0),
+                pretty_ty_unicode(exists_ty)
+            ),
+            PTm::Unpack { scrut, body } => format!(
+                "unpack {} in {}",
+                go(scrut, depth, 2),
+                go(body, depth + 1, 0)
+            ),
+            PTm::Refl { term } => format!("refl({})", pretty_fo_term(term)),
+            PTm::Subst {
+                eq_proof,
+                body,
+                motive,
+            } => format!(
+                "subst({}, {}, {})",
+                go(eq_proof, depth, 2),
+                go(body, depth, 2),
+                pretty_ty_unicode(motive)
             ),
         }
     }

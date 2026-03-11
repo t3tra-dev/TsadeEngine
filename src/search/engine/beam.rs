@@ -6,7 +6,7 @@ use crate::kernel::{Ctx, Tm, Ty};
 
 use super::super::{
     ChoiceStream, Goal, GoalStrategy, PTm, SearchConfig, SearchMetrics, SearchOutcome,
-    SearchPolicy, SearchState, score_partial, try_finalize,
+    SearchPolicy, SearchState, partial_features, score_partial, try_finalize,
 };
 use super::synth::{SearchRuntime, ctx_fingerprint, greedy_local_repair, replace_hole, synth};
 
@@ -146,6 +146,44 @@ fn state_fingerprint(state: &SearchState) -> u64 {
                 target_ty.hash(h);
                 hash_ptm(bot_term, st, hole_map, next_id, h);
             }
+            PTm::TLam { body } => {
+                11u8.hash(h);
+                hash_ptm(body, st, hole_map, next_id, h);
+            }
+            PTm::TApp { term, witness } => {
+                12u8.hash(h);
+                witness.hash(h);
+                hash_ptm(term, st, hole_map, next_id, h);
+            }
+            PTm::Pack {
+                witness,
+                body,
+                exists_ty,
+            } => {
+                13u8.hash(h);
+                witness.hash(h);
+                exists_ty.hash(h);
+                hash_ptm(body, st, hole_map, next_id, h);
+            }
+            PTm::Unpack { scrut, body } => {
+                14u8.hash(h);
+                hash_ptm(scrut, st, hole_map, next_id, h);
+                hash_ptm(body, st, hole_map, next_id, h);
+            }
+            PTm::Refl { term } => {
+                15u8.hash(h);
+                term.hash(h);
+            }
+            PTm::Subst {
+                eq_proof,
+                body,
+                motive,
+            } => {
+                16u8.hash(h);
+                motive.hash(h);
+                hash_ptm(eq_proof, st, hole_map, next_id, h);
+                hash_ptm(body, st, hole_map, next_id, h);
+            }
         }
     }
 
@@ -251,15 +289,29 @@ pub fn beam_search(
                 }
             }
         }
-        let mut deduped: Vec<SearchState> = uniq.into_values().collect();
+        let mut deduped: Vec<(u64, SearchState)> = uniq.into_iter().collect();
         metrics.dedup_dropped += before.saturating_sub(deduped.len());
 
-        deduped.sort_by_key(|s| -score_partial(s));
+        deduped.sort_by_key(|(fp, s)| {
+            let feat = partial_features(s);
+            (
+                -score_partial(s),
+                feat.holes,
+                feat.goal_complexity,
+                feat.stuck_goals,
+                feat.fo_witness_cost,
+                feat.root_size,
+                feat.app_nodes,
+                feat.case_nodes,
+                feat.repeat_case_nodes,
+                *fp,
+            )
+        });
         let bw = cfg.beam_width.max(1);
         if deduped.len() > bw {
             deduped.truncate(bw);
         }
-        beam = deduped;
+        beam = deduped.into_iter().map(|(_, s)| s).collect();
     }
 
     let mut best = beam[0].clone();

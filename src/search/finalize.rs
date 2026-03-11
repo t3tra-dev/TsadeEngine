@@ -37,6 +37,36 @@ pub fn try_finalize(state: &SearchState) -> Option<Tm> {
                 bot_term: Box::new(conv(bot_term)?),
                 target_ty: target_ty.clone(),
             }),
+            PTm::TLam { body } => Some(Tm::TLam {
+                body: Box::new(conv(body)?),
+            }),
+            PTm::TApp { term, witness } => Some(Tm::TApp {
+                term: Box::new(conv(term)?),
+                witness: witness.clone(),
+            }),
+            PTm::Pack {
+                witness,
+                body,
+                exists_ty,
+            } => Some(Tm::Pack {
+                witness: witness.clone(),
+                body: Box::new(conv(body)?),
+                exists_ty: exists_ty.clone(),
+            }),
+            PTm::Unpack { scrut, body } => Some(Tm::Unpack {
+                scrut: Box::new(conv(scrut)?),
+                body: Box::new(conv(body)?),
+            }),
+            PTm::Refl { term } => Some(Tm::Refl { term: term.clone() }),
+            PTm::Subst {
+                eq_proof,
+                body,
+                motive,
+            } => Some(Tm::Subst {
+                eq_proof: Box::new(conv(eq_proof)?),
+                body: Box::new(conv(body)?),
+                motive: motive.clone(),
+            }),
         }
     }
     conv(&state.root)

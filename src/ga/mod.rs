@@ -473,6 +473,57 @@ fn find_hole_path(root: &PTm, hole_id: u32) -> Option<String> {
                 }
                 ok
             }
+            PTm::TLam { body } => {
+                path.push("TLam");
+                let ok = go(body, hole_id, path);
+                if !ok {
+                    path.pop();
+                }
+                ok
+            }
+            PTm::TApp { term, .. } => {
+                path.push("TApp");
+                let ok = go(term, hole_id, path);
+                if !ok {
+                    path.pop();
+                }
+                ok
+            }
+            PTm::Pack { body, .. } => {
+                path.push("Pack");
+                let ok = go(body, hole_id, path);
+                if !ok {
+                    path.pop();
+                }
+                ok
+            }
+            PTm::Unpack { scrut, body } => {
+                path.push("UnpackS");
+                if go(scrut, hole_id, path) {
+                    return true;
+                }
+                path.pop();
+                path.push("UnpackB");
+                let ok = go(body, hole_id, path);
+                if !ok {
+                    path.pop();
+                }
+                ok
+            }
+            PTm::Refl { .. } => false,
+            PTm::Subst { eq_proof, body, .. } => {
+                path.push("SubstEq");
+                if go(eq_proof, hole_id, path) {
+                    return true;
+                }
+                path.pop();
+                path.push("SubstB");
+                let ok = go(body, hole_id, path);
+                if !ok {
+                    path.pop();
+                }
+                ok
+            }
             PTm::Var(_) => false,
         }
     }

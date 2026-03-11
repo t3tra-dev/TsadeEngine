@@ -551,3 +551,556 @@ fn subject_reduction_eta() {
     let ty_after = infer(&ctx, &reduced).expect("η-reduced should typecheck");
     assert_eq!(ty_before, ty_after);
 }
+
+// --- FOL Phase 1: term-variable operations on types ---
+
+use super::FOTerm;
+
+#[test]
+fn ty_term_shift_atom_bot_unchanged() {
+    assert_eq!(ty_term_shift(5, 0, &Ty::Atom(0)), Ty::Atom(0));
+    assert_eq!(ty_term_shift(5, 0, &Ty::Bot), Ty::Bot);
+}
+
+#[test]
+fn ty_term_shift_pred_args() {
+    let ty = Ty::Pred {
+        sym: 0,
+        args: vec![FOTerm::Var(0), FOTerm::Var(1)],
+    };
+    let shifted = ty_term_shift(1, 0, &ty);
+    assert_eq!(
+        shifted,
+        Ty::Pred {
+            sym: 0,
+            args: vec![FOTerm::Var(1), FOTerm::Var(2)],
+        }
+    );
+}
+
+#[test]
+fn ty_term_shift_forall_increments_cutoff() {
+    // ∀. P(Var(0), Var(1)) — Var(0) bound, Var(1) free
+    let ty = Ty::Forall(Box::new(Ty::Pred {
+        sym: 0,
+        args: vec![FOTerm::Var(0), FOTerm::Var(1)],
+    }));
+    let shifted = ty_term_shift(10, 0, &ty);
+    // Var(0) < cutoff=1 → unchanged; Var(1) >= cutoff=1 → Var(11)
+    assert_eq!(
+        shifted,
+        Ty::Forall(Box::new(Ty::Pred {
+            sym: 0,
+            args: vec![FOTerm::Var(0), FOTerm::Var(11)],
+        }))
+    );
+}
+
+#[test]
+fn ty_term_shift_nested_forall() {
+    // ∀. ∀. P(Var(0), Var(1), Var(2))
+    // Var(0), Var(1) bound, Var(2) free
+    let ty = Ty::Forall(Box::new(Ty::Forall(Box::new(Ty::Pred {
+        sym: 0,
+        args: vec![FOTerm::Var(0), FOTerm::Var(1), FOTerm::Var(2)],
+    }))));
+    let shifted = ty_term_shift(1, 0, &ty);
+    assert_eq!(
+        shifted,
+        Ty::Forall(Box::new(Ty::Forall(Box::new(Ty::Pred {
+            sym: 0,
+            args: vec![FOTerm::Var(0), FOTerm::Var(1), FOTerm::Var(3)],
+        }))))
+    );
+}
+
+#[test]
+fn ty_term_subst_pred() {
+    // P(Var(0)) [0 := Const(42)] → P(Const(42))
+    let ty = Ty::Pred {
+        sym: 0,
+        args: vec![FOTerm::Var(0)],
+    };
+    let result = ty_term_subst(0, &FOTerm::Const(42), &ty);
+    assert_eq!(
+        result,
+        Ty::Pred {
+            sym: 0,
+            args: vec![FOTerm::Const(42)],
+        }
+    );
+}
+
+#[test]
+fn ty_term_subst_under_forall() {
+    // ∀. P(Var(0), Var(1)) [0 := Const(7)]
+    // Var(0) is bound → unchanged; Var(1) is free var 0 → Const(7)
+    let ty = Ty::Forall(Box::new(Ty::Pred {
+        sym: 0,
+        args: vec![FOTerm::Var(0), FOTerm::Var(1)],
+    }));
+    let result = ty_term_subst(0, &FOTerm::Const(7), &ty);
+    assert_eq!(
+        result,
+        Ty::Forall(Box::new(Ty::Pred {
+            sym: 0,
+            args: vec![FOTerm::Var(0), FOTerm::Const(7)],
+        }))
+    );
+}
+
+#[test]
+fn ty_term_subst_bound_var_preserved() {
+    // ∀. P(Var(0)) [0 := Const(7)] — Var(0) bound, should not be substituted
+    let ty = Ty::Forall(Box::new(Ty::Pred {
+        sym: 0,
+        args: vec![FOTerm::Var(0)],
+    }));
+    let result = ty_term_subst(0, &FOTerm::Const(7), &ty);
+    assert_eq!(result, ty);
+}
+
+#[test]
+fn ty_term_subst_top_basic() {
+    // ∀. P(Var(0)) — subst_top with Const(5) → P(Const(5))
+    let body = Ty::Pred {
+        sym: 0,
+        args: vec![FOTerm::Var(0)],
+    };
+    let result = ty_term_subst_top(&FOTerm::Const(5), &body);
+    assert_eq!(
+        result,
+        Ty::Pred {
+            sym: 0,
+            args: vec![FOTerm::Const(5)],
+        }
+    );
+}
+
+#[test]
+fn ty_term_subst_top_shifts_free_vars() {
+    // Body = P(Var(0), Var(1))
+    // subst_top with Const(5):
+    //   shift s up: Const(5) → Const(5)
+    //   subst 0: Var(0)→Const(5), Var(1) unchanged
+    //   shift down: Var(1)→Var(0)
+    //   Result: P(Const(5), Var(0))
+    let body = Ty::Pred {
+        sym: 0,
+        args: vec![FOTerm::Var(0), FOTerm::Var(1)],
+    };
+    let result = ty_term_subst_top(&FOTerm::Const(5), &body);
+    assert_eq!(
+        result,
+        Ty::Pred {
+            sym: 0,
+            args: vec![FOTerm::Const(5), FOTerm::Var(0)],
+        }
+    );
+}
+
+#[test]
+fn ty_term_subst_arr_propagates() {
+    // (P(Var(0)) → P(Var(1))) [0 := Const(3)]
+    let ty = Ty::Arr(
+        Box::new(Ty::Pred {
+            sym: 0,
+            args: vec![FOTerm::Var(0)],
+        }),
+        Box::new(Ty::Pred {
+            sym: 0,
+            args: vec![FOTerm::Var(1)],
+        }),
+    );
+    let result = ty_term_subst(0, &FOTerm::Const(3), &ty);
+    assert_eq!(
+        result,
+        Ty::Arr(
+            Box::new(Ty::Pred {
+                sym: 0,
+                args: vec![FOTerm::Const(3)],
+            }),
+            Box::new(Ty::Pred {
+                sym: 0,
+                args: vec![FOTerm::Var(1)],
+            }),
+        )
+    );
+}
+
+#[test]
+fn is_intuitionistic_theorem_rejects_fol() {
+    // FOL types should return false from the propositional decider
+    let fol_ty = Ty::Forall(Box::new(Ty::Pred {
+        sym: 0,
+        args: vec![FOTerm::Var(0)],
+    }));
+    assert!(!is_intuitionistic_theorem(&Vec::new(), &fol_ty));
+}
+
+#[test]
+fn is_intuitionistic_theorem_accepts_ground_one_plus_one() {
+    let case = crate::ga::corpus::arith_corpus()
+        .into_iter()
+        .find(|c| c.name == "C3_OnePlusOne")
+        .expect("C3_OnePlusOne exists");
+    assert!(is_intuitionistic_theorem(&case.ctx, &case.target));
+}
+
+#[test]
+fn ty_size_fol_types() {
+    let pred = Ty::Pred {
+        sym: 0,
+        args: vec![FOTerm::Var(0), FOTerm::Const(1)],
+    };
+    assert_eq!(ty_size(&pred), 3); // 1 + 1 + 1
+
+    let forall = Ty::Forall(Box::new(pred.clone()));
+    assert_eq!(ty_size(&forall), 4); // 1 + 3
+
+    let exists = Ty::Exists(Box::new(Ty::Bot));
+    assert_eq!(ty_size(&exists), 2); // 1 + 1
+}
+
+// --- FOL Phase 2: Proof term constructs ---
+
+#[test]
+fn tlam_intro_typing() {
+    // Λ. Var(0) in context [P(Var(0))]
+    // Shifted ctx: [P(Var(1))], body Var(0) has type P(Var(1))
+    // Result: ∀. P(Var(1))  — but wait, the body's type uses shifted vars
+    // Actually let's use a simpler example: empty ctx, body is a proof of an atom
+    // Λ. x0 where ctx = [A0] → shifted ctx = [A0] (Atom has no term vars)
+    // body Var(0) : A0, so TLam : ∀. A0
+    let ctx = vec![Ty::Atom(0)];
+    let tm = Tm::TLam {
+        body: Box::new(Tm::Var(0)),
+    };
+    let ty = infer(&ctx, &tm).expect("TLam should typecheck");
+    assert_eq!(ty, Ty::Forall(Box::new(Ty::Atom(0))));
+}
+
+#[test]
+fn tlam_intro_with_pred() {
+    // ctx = [P(Var(0))], Λ. Var(0)
+    // shifted ctx = [P(Var(1))], body Var(0) : P(Var(1))
+    // Result: ∀. P(Var(1))
+    let ctx = vec![Ty::Pred {
+        sym: 0,
+        args: vec![FOTerm::Var(0)],
+    }];
+    let tm = Tm::TLam {
+        body: Box::new(Tm::Var(0)),
+    };
+    let ty = infer(&ctx, &tm).expect("TLam with pred should typecheck");
+    assert_eq!(
+        ty,
+        Ty::Forall(Box::new(Ty::Pred {
+            sym: 0,
+            args: vec![FOTerm::Var(1)],
+        }))
+    );
+}
+
+#[test]
+fn tapp_elim_typing() {
+    // Given proof of ∀. P(Var(0)), TApp with Const(5) yields P(Const(5))
+    let forall_ty = Ty::Forall(Box::new(Ty::Pred {
+        sym: 0,
+        args: vec![FOTerm::Var(0)],
+    }));
+    let ctx = vec![forall_ty.clone()];
+    let tm = Tm::TApp {
+        term: Box::new(Tm::Var(0)),
+        witness: FOTerm::Const(5),
+    };
+    let ty = infer(&ctx, &tm).expect("TApp should typecheck");
+    assert_eq!(
+        ty,
+        Ty::Pred {
+            sym: 0,
+            args: vec![FOTerm::Const(5)],
+        }
+    );
+}
+
+#[test]
+fn pack_typing() {
+    // pack(Const(7), proof) as ∃. P(Var(0))
+    // Need body : P(Const(7))
+    let exists_ty = Ty::Exists(Box::new(Ty::Pred {
+        sym: 0,
+        args: vec![FOTerm::Var(0)],
+    }));
+    let body_ty = Ty::Pred {
+        sym: 0,
+        args: vec![FOTerm::Const(7)],
+    };
+    let ctx = vec![body_ty];
+    let tm = Tm::Pack {
+        witness: FOTerm::Const(7),
+        body: Box::new(Tm::Var(0)),
+        exists_ty: exists_ty.clone(),
+    };
+    let ty = infer(&ctx, &tm).expect("Pack should typecheck");
+    assert_eq!(ty, exists_ty);
+}
+
+#[test]
+fn unpack_typing() {
+    // Given ∃. P(Var(0)), unpack with body that produces A0 (no term var)
+    // ctx = [∃. P(Var(0)), A0 → A0]
+    // scrut = Var(1) : ∃. P(Var(0))
+    // In unpack body: shifted ctx + P(Var(0)) pushed
+    // body = Var(1) which will have type from shifted ctx entry for A0 → A0
+    // Actually let's keep it simple:
+    // ctx = [∃. P(Var(0))], scrut = Var(0)
+    // shifted ctx = [∃. P(Var(1))], then push P(Var(0))
+    // body needs to produce something without term var 0
+    // body = Lam { arg_ty: A0, body: Var(0) } : A0 → A0 (no term vars)
+    let exists_ty = Ty::Exists(Box::new(Ty::Pred {
+        sym: 0,
+        args: vec![FOTerm::Var(0)],
+    }));
+    let ctx = vec![exists_ty];
+    let tm = Tm::Unpack {
+        scrut: Box::new(Tm::Var(0)),
+        body: Box::new(Tm::Lam {
+            arg_ty: Ty::Atom(0),
+            body: Box::new(Tm::Var(0)),
+        }),
+    };
+    let ty = infer(&ctx, &tm).expect("Unpack should typecheck");
+    assert_eq!(ty, Ty::Arr(Box::new(Ty::Atom(0)), Box::new(Ty::Atom(0))));
+}
+
+#[test]
+fn tapp_on_non_forall_error() {
+    let ctx = vec![Ty::Atom(0)];
+    let tm = Tm::TApp {
+        term: Box::new(Tm::Var(0)),
+        witness: FOTerm::Const(0),
+    };
+    let err = infer(&ctx, &tm).expect_err("must fail");
+    assert!(matches!(err, TypeError::NotAForall { .. }));
+}
+
+#[test]
+fn unpack_on_non_exists_error() {
+    let ctx = vec![Ty::Atom(0)];
+    let tm = Tm::Unpack {
+        scrut: Box::new(Tm::Var(0)),
+        body: Box::new(Tm::Var(0)),
+    };
+    let err = infer(&ctx, &tm).expect_err("must fail");
+    assert!(matches!(err, TypeError::NotAnExists { .. }));
+}
+
+#[test]
+fn pack_wrong_exists_ty_error() {
+    // exists_ty is not ∃.φ
+    let ctx = vec![Ty::Atom(0)];
+    let tm = Tm::Pack {
+        witness: FOTerm::Const(0),
+        body: Box::new(Tm::Var(0)),
+        exists_ty: Ty::Atom(0),
+    };
+    let err = infer(&ctx, &tm).expect_err("must fail");
+    assert!(matches!(err, TypeError::NotAnExists { .. }));
+}
+
+#[test]
+fn tapp_tlam_beta_reduction() {
+    // TApp(TLam{body}, witness) → tm_term_subst_top(witness, body)
+    // TLam body = Var(0) (a proof var), witness = Const(5)
+    // After reduction: tm_term_subst_top(Const(5), Var(0)) = Var(0) (proof vars unaffected)
+    let tm = Tm::TApp {
+        term: Box::new(Tm::TLam {
+            body: Box::new(Tm::Var(0)),
+        }),
+        witness: FOTerm::Const(5),
+    };
+    let nf = normalize(&tm);
+    assert_eq!(nf, Tm::Var(0));
+}
+
+#[test]
+fn unpack_pack_beta_reduction() {
+    // Unpack(Pack{w, p, _}, body) → subst_top(p, &tm_term_subst_top(w, body))
+    // Pack: witness=Const(3), body=Var(0) (proof of P(Const(3)))
+    // Unpack body: Var(0) (bound proof var referencing the opened proof)
+    // Result: subst_top(Var(0)_proof, tm_term_subst_top(Const(3), Var(0)))
+    //       = subst_top(Var(0), Var(0)) = Var(0)
+    let exists_ty = Ty::Exists(Box::new(Ty::Pred {
+        sym: 0,
+        args: vec![FOTerm::Var(0)],
+    }));
+    let tm = Tm::Unpack {
+        scrut: Box::new(Tm::Pack {
+            witness: FOTerm::Const(3),
+            body: Box::new(Tm::Var(0)),
+            exists_ty,
+        }),
+        body: Box::new(Tm::Var(0)),
+    };
+    let nf = normalize(&tm);
+    assert_eq!(nf, Tm::Var(0));
+}
+
+#[test]
+fn subject_reduction_tlam_tapp() {
+    // Build a well-typed TApp(TLam{...}, witness) and check type is preserved
+    // ctx = [P(Var(0))]
+    // TLam { body: Var(0) } : ∀. P(Var(1))  (ctx shifted up)
+    // TApp with Const(5):  P(Var(1))[0:=Const(5)] — but Var(1) is free, so P(Var(0)) after shift-down
+    // Wait, let me think more carefully.
+    //
+    // ctx = [∀. P(Var(0))], tm = TApp { term: Var(0), witness: Const(5) }
+    // Var(0) : ∀. P(Var(0))
+    // TApp yields P(Var(0))[0:=Const(5)] = P(Const(5))
+    let forall_ty = Ty::Forall(Box::new(Ty::Pred {
+        sym: 0,
+        args: vec![FOTerm::Var(0)],
+    }));
+    let ctx = vec![forall_ty];
+    let tm = Tm::TApp {
+        term: Box::new(Tm::Var(0)),
+        witness: FOTerm::Const(5),
+    };
+    let ty_before = infer(&ctx, &tm).expect("typed");
+    // Build a redex: TApp(TLam{body}, Const(5))
+    // ctx = [∀. P(Var(0))]
+    // Inside TLam, shifted ctx = [∀. P(Var(1))]
+    // body = TApp { Var(0), Var(0) }: Var(0) : ∀. P(Var(1)), TApp with FOTerm::Var(0) → P(Var(1))[0:=Var(0)] = P(Var(0))
+    // TLam : ∀. P(Var(0))
+    // TApp with Const(5): P(Var(0))[0:=Const(5)] = P(Const(5))
+    let ctx2 = vec![Ty::Forall(Box::new(Ty::Pred {
+        sym: 0,
+        args: vec![FOTerm::Var(0)],
+    }))];
+    let redex = Tm::TApp {
+        term: Box::new(Tm::TLam {
+            body: Box::new(Tm::TApp {
+                term: Box::new(Tm::Var(0)),
+                witness: FOTerm::Var(0),
+            }),
+        }),
+        witness: FOTerm::Const(5),
+    };
+    let ty_before2 = infer(&ctx2, &redex).expect("redex should typecheck");
+    let nf = normalize(&redex);
+    let ty_after = infer(&ctx2, &nf).expect("normal form should typecheck");
+    assert_eq!(ty_before2, ty_after);
+    assert_eq!(
+        ty_before,
+        Ty::Pred {
+            sym: 0,
+            args: vec![FOTerm::Const(5)],
+        }
+    );
+}
+
+#[test]
+fn tm_term_shift_basic() {
+    // TApp { term: Var(0), witness: FOTerm::Var(0) } shifted by 1
+    // Var(0) is proof var → unchanged, FOTerm::Var(0) → FOTerm::Var(1)
+    let tm = Tm::TApp {
+        term: Box::new(Tm::Var(0)),
+        witness: FOTerm::Var(0),
+    };
+    let shifted = tm_term_shift(1, 0, &tm);
+    assert_eq!(
+        shifted,
+        Tm::TApp {
+            term: Box::new(Tm::Var(0)),
+            witness: FOTerm::Var(1),
+        }
+    );
+}
+
+#[test]
+fn tm_term_shift_under_tlam() {
+    // TLam { body: TApp { Var(0), FOTerm::Var(0) } } shifted by 1
+    // TLam binds term var → cutoff increments
+    // FOTerm::Var(0) < cutoff=1 → unchanged
+    let tm = Tm::TLam {
+        body: Box::new(Tm::TApp {
+            term: Box::new(Tm::Var(0)),
+            witness: FOTerm::Var(0),
+        }),
+    };
+    let shifted = tm_term_shift(1, 0, &tm);
+    assert_eq!(
+        shifted,
+        Tm::TLam {
+            body: Box::new(Tm::TApp {
+                term: Box::new(Tm::Var(0)),
+                witness: FOTerm::Var(0),
+            }),
+        }
+    );
+}
+
+#[test]
+fn tm_term_subst_top_basic() {
+    // TApp { Var(0), FOTerm::Var(0) } with subst_top(Const(9))
+    // FOTerm::Var(0) → Const(9), proof Var(0) unchanged
+    let tm = Tm::TApp {
+        term: Box::new(Tm::Var(0)),
+        witness: FOTerm::Var(0),
+    };
+    let result = tm_term_subst_top(&FOTerm::Const(9), &tm);
+    assert_eq!(
+        result,
+        Tm::TApp {
+            term: Box::new(Tm::Var(0)),
+            witness: FOTerm::Const(9),
+        }
+    );
+}
+
+#[test]
+fn unpack_term_var_escapes() {
+    // Unpack where body type mentions term var 0 → should error
+    // ctx = [∃. P(Var(0))], body produces P(Var(0)) which mentions term var 0
+    let exists_ty = Ty::Exists(Box::new(Ty::Pred {
+        sym: 0,
+        args: vec![FOTerm::Var(0)],
+    }));
+    let ctx = vec![exists_ty];
+    // body = Var(0) : P(Var(0)) — the opened type, which mentions term var 0
+    let tm = Tm::Unpack {
+        scrut: Box::new(Tm::Var(0)),
+        body: Box::new(Tm::Var(0)),
+    };
+    let err = infer(&ctx, &tm).expect_err("must fail: term var escapes");
+    assert!(matches!(err, TypeError::TermVarEscapes));
+}
+
+#[test]
+fn ty_term_free_in_basic() {
+    assert!(ty_term_free_in(
+        0,
+        &Ty::Pred {
+            sym: 0,
+            args: vec![FOTerm::Var(0)]
+        }
+    ));
+    assert!(!ty_term_free_in(0, &Ty::Atom(0)));
+    assert!(!ty_term_free_in(0, &Ty::Bot));
+    // Under Forall: var 0 becomes var 1
+    assert!(!ty_term_free_in(
+        0,
+        &Ty::Forall(Box::new(Ty::Pred {
+            sym: 0,
+            args: vec![FOTerm::Var(0)]
+        }))
+    ));
+    assert!(ty_term_free_in(
+        0,
+        &Ty::Forall(Box::new(Ty::Pred {
+            sym: 0,
+            args: vec![FOTerm::Var(1)]
+        }))
+    ));
+}

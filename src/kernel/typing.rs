@@ -1,5 +1,6 @@
 use std::fmt;
 
+use super::ops::{ty_term_free_in, ty_term_shift, ty_term_subst_top};
 use super::{Ctx, Tm, Ty};
 
 /// 型の正規化
@@ -10,9 +11,16 @@ pub fn normalize_ty(ty: &Ty) -> Ty {
     match ty {
         Ty::Atom(i) => Ty::Atom(*i),
         Ty::Bot => Ty::Bot,
+        Ty::Pred { sym, args } => Ty::Pred {
+            sym: *sym,
+            args: args.clone(),
+        },
         Ty::Arr(a, b) => Ty::Arr(Box::new(normalize_ty(a)), Box::new(normalize_ty(b))),
         Ty::Prod(a, b) => Ty::Prod(Box::new(normalize_ty(a)), Box::new(normalize_ty(b))),
         Ty::Sum(a, b) => Ty::Sum(Box::new(normalize_ty(a)), Box::new(normalize_ty(b))),
+        Ty::Forall(body) => Ty::Forall(Box::new(normalize_ty(body))),
+        Ty::Exists(body) => Ty::Exists(Box::new(normalize_ty(body))),
+        Ty::Eq(s, t) => Ty::Eq(s.clone(), t.clone()),
     }
 }
 
@@ -27,13 +35,17 @@ pub fn ty_equiv(a: &Ty, b: &Ty) -> bool {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub enum TypeError {
     UnboundVar { index: u32, ctx_len: usize },
-    NotAFunction { found: Ty },
-    ArgTypeMismatch { expected: Ty, found: Ty },
-    NotAProduct { found: Ty },
-    NotASum { found: Ty },
-    NotBot { found: Ty },
-    BranchTypeMismatch { left: Ty, right: Ty },
-    TypeMismatch { expected: Ty, found: Ty },
+    NotAFunction { found: Box<Ty> },
+    ArgTypeMismatch { expected: Box<Ty>, found: Box<Ty> },
+    NotAProduct { found: Box<Ty> },
+    NotASum { found: Box<Ty> },
+    NotBot { found: Box<Ty> },
+    BranchTypeMismatch { left: Box<Ty>, right: Box<Ty> },
+    TypeMismatch { expected: Box<Ty>, found: Box<Ty> },
+    NotAForall { found: Box<Ty> },
+    NotAnExists { found: Box<Ty> },
+    NotAnEquality { found: Box<Ty> },
+    TermVarEscapes,
 }
 
 impl fmt::Display for TypeError {
@@ -62,6 +74,18 @@ impl fmt::Display for TypeError {
             }
             TypeError::TypeMismatch { expected, found } => {
                 write!(f, "type mismatch: expected {expected:?}, found {found:?}")
+            }
+            TypeError::NotAForall { found } => {
+                write!(f, "expected forall type, found {found:?}")
+            }
+            TypeError::NotAnExists { found } => {
+                write!(f, "expected exists type, found {found:?}")
+            }
+            TypeError::NotAnEquality { found } => {
+                write!(f, "expected equality type, found {found:?}")
+            }
+            TypeError::TermVarEscapes => {
+                write!(f, "term variable escapes its scope in unpack")
             }
         }
     }
@@ -99,12 +123,14 @@ pub fn infer(ctx: &Ctx, tm: &Tm) -> Result<Ty, TypeError> {
                         Ok(*out)
                     } else {
                         Err(TypeError::ArgTypeMismatch {
-                            expected: *arg,
-                            found: x_ty,
+                            expected: arg,
+                            found: Box::new(x_ty),
                         })
                     }
                 }
-                other => Err(TypeError::NotAFunction { found: other }),
+                other => Err(TypeError::NotAFunction {
+                    found: Box::new(other),
+                }),
             }
         }
         Tm::Pair(a, b) => {
@@ -114,11 +140,15 @@ pub fn infer(ctx: &Ctx, tm: &Tm) -> Result<Ty, TypeError> {
         }
         Tm::Fst(t) => match infer(ctx, t)? {
             Ty::Prod(a, _) => Ok(*a),
-            other => Err(TypeError::NotAProduct { found: other }),
+            other => Err(TypeError::NotAProduct {
+                found: Box::new(other),
+            }),
         },
         Tm::Snd(t) => match infer(ctx, t)? {
             Ty::Prod(_, b) => Ok(*b),
-            other => Err(TypeError::NotAProduct { found: other }),
+            other => Err(TypeError::NotAProduct {
+                found: Box::new(other),
+            }),
         },
         Tm::Inl { rhs_ty, term } => {
             let lhs_ty = infer(ctx, term)?;
@@ -140,20 +170,106 @@ pub fn infer(ctx: &Ctx, tm: &Tm) -> Result<Ty, TypeError> {
                     Ok(lty)
                 } else {
                     Err(TypeError::BranchTypeMismatch {
-                        left: lty,
-                        right: rty,
+                        left: Box::new(lty),
+                        right: Box::new(rty),
                     })
                 }
             }
-            other => Err(TypeError::NotASum { found: other }),
+            other => Err(TypeError::NotASum {
+                found: Box::new(other),
+            }),
         },
         Tm::Absurd {
             bot_term,
             target_ty,
         } => match infer(ctx, bot_term)? {
             Ty::Bot => Ok(target_ty.clone()),
-            other => Err(TypeError::NotBot { found: other }),
+            other => Err(TypeError::NotBot {
+                found: Box::new(other),
+            }),
         },
+        Tm::TLam { body } => {
+            // ∀-intro: shift all ctx types up by 1 term var, infer body, wrap in Forall
+            let shifted_ctx: Ctx = ctx.iter().map(|t| ty_term_shift(1, 0, t)).collect();
+            let body_ty = infer(&shifted_ctx, body)?;
+            Ok(Ty::Forall(Box::new(body_ty)))
+        }
+        Tm::TApp { term, witness } => {
+            // ∀-elim: term must have type ∀.φ, result is φ[0:=witness]
+            match infer(ctx, term)? {
+                Ty::Forall(body) => Ok(ty_term_subst_top(witness, &body)),
+                other => Err(TypeError::NotAForall {
+                    found: Box::new(other),
+                }),
+            }
+        }
+        Tm::Pack {
+            witness,
+            body,
+            exists_ty,
+        } => {
+            // ∃-intro: exists_ty must be ∃.φ, body must have type φ[0:=witness]
+            match exists_ty {
+                Ty::Exists(phi) => {
+                    let expected = ty_term_subst_top(witness, phi);
+                    let body_ty = infer(ctx, body)?;
+                    if ty_equiv(&body_ty, &expected) {
+                        Ok(exists_ty.clone())
+                    } else {
+                        Err(TypeError::TypeMismatch {
+                            expected: Box::new(expected),
+                            found: Box::new(body_ty),
+                        })
+                    }
+                }
+                _ => Err(TypeError::NotAnExists {
+                    found: Box::new(exists_ty.clone()),
+                }),
+            }
+        }
+        Tm::Refl { term } => Ok(Ty::Eq(term.clone(), term.clone())),
+        Tm::Subst {
+            eq_proof,
+            body,
+            motive,
+        } => match infer(ctx, eq_proof)? {
+            Ty::Eq(lhs, rhs) => {
+                let body_ty = infer(ctx, body)?;
+                let expected = ty_term_subst_top(&lhs, motive);
+                if ty_equiv(&body_ty, &expected) {
+                    Ok(ty_term_subst_top(&rhs, motive))
+                } else {
+                    Err(TypeError::TypeMismatch {
+                        expected: Box::new(expected),
+                        found: Box::new(body_ty),
+                    })
+                }
+            }
+            other => Err(TypeError::NotAnEquality {
+                found: Box::new(other),
+            }),
+        },
+        Tm::Unpack { scrut, body } => {
+            // ∃-elim: scrut must have type ∃.φ,
+            // body checked in extended context (shift ctx up by 1 term var, push φ),
+            // body type must not mention term var 0, then shift result down
+            match infer(ctx, scrut)? {
+                Ty::Exists(phi) => {
+                    let shifted_ctx: Ctx = ctx.iter().map(|t| ty_term_shift(1, 0, t)).collect();
+                    let mut ext = shifted_ctx;
+                    ext.push(*phi);
+                    let body_ty = infer(&ext, body)?;
+                    if ty_term_free_in(0, &body_ty) {
+                        Err(TypeError::TermVarEscapes)
+                    } else {
+                        Ok(ty_term_shift(-1, 0, &body_ty))
+                    }
+                }
+                other => Err(TypeError::NotAnExists {
+                    found: Box::new(other),
+                }),
+            }
+        }
     }
 }
 
@@ -163,8 +279,8 @@ pub fn check(ctx: &Ctx, tm: &Tm, ty: &Ty) -> Result<(), TypeError> {
         Ok(())
     } else {
         Err(TypeError::TypeMismatch {
-            expected: ty.clone(),
-            found: inferred,
+            expected: Box::new(ty.clone()),
+            found: Box::new(inferred),
         })
     }
 }
